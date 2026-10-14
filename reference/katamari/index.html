@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>clawd 橡皮擦 · 擦除本站</title>
+<meta name="description" content="clawd 变成橡皮擦，在真实页面上滚一圈，文字和图片就被擦成空白，留下一个个白色的洞。支持书签擦任意网页。">
+<style>
+:root {
+  --bg: #0b0b10; --panel: #15151c; --line: #2a2a35;
+  --primary: #7c6cff; --gold: #ffd23e; --muted: #9a9aa8;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; overflow: hidden; }
+body { background: var(--bg); color: #e8e8ee; font-family: var(--mono); user-select: none; }
+#wrap { position: fixed; inset: 0; }
+#stage { position: absolute; inset: 0; overflow: hidden; background: var(--bg); }
+#world { position: absolute; top: 0; left: 0; width: 100%; will-change: transform; }
+#target { width: 100%; border: 0; display: block; pointer-events: none; }
+#fx { position: absolute; top: 0; left: 0; pointer-events: none; }
+#loading {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: var(--bg); z-index: 8; font-size: 13px; letter-spacing: .2em; color: var(--muted);
+}
+#loading.done { display: none; }
+#ball { position: absolute; z-index: 4; pointer-events: none; }
+#spin { position: absolute; inset: 0; }
+#clutter { position: absolute; inset: 0; }
+#clutter .frag {
+  position: absolute; left: 50%; top: 50%;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.4);
+  display: flex; align-items: center; justify-content: center;
+  overflow: visible; white-space: nowrap; text-shadow: 0 1px 0 rgba(0,0,0,.35);
+}
+#ball img {
+  position: absolute; left: 50%; top: 50%; height: 78%; width: 78%;
+  object-fit: cover; transform: translate(-50%, -50%); border-radius: 50%;
+  box-shadow: 0 0 0 3px rgba(255,210,62,.9), 0 4px 14px rgba(0,0,0,.5);
+}
+#ball.pop { animation: pop .18s; }
+@keyframes pop { 40% { transform: scale(1.08); } }
+#hud {
+  position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+  z-index: 6; display: flex; flex-direction: column; align-items: center; gap: 5px; pointer-events: none;
+}
+#hudTitle { font-size: 12px; letter-spacing: .14em; color: #cfcfda; }
+#hudTitle b { color: var(--gold); font-size: 15px; }
+#hudBar { width: min(420px, 70vw); height: 12px; background: #0009; border: 2px solid var(--line); position: relative; }
+#hudFill { position: absolute; inset: 0; width: 0%; background: linear-gradient(90deg, var(--primary), var(--gold)); transition: width .3s; }
+#hint { font-size: 11px; color: var(--muted); letter-spacing: .08em; text-shadow: 0 1px 0 #000; }
+@media (max-width: 720px) { #hint { display: none; } }
+@media (pointer: fine) { #joy { display: none !important; } }
+#intro, #done {
+  position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+  background: rgba(5,5,9,.78); backdrop-filter: blur(3px);
+}
+#intro .panel, #done .panel {
+  width: min(560px, 92vw); background: var(--panel); border: 2px solid var(--line);
+  box-shadow: 8px 8px 0 #000a; padding: 28px 30px; text-align: center;
+}
+#intro h1, #done h1 { font-size: 26px; margin-bottom: 14px; }
+#intro p, #done p { font-size: 13px; line-height: 1.9; color: #c9c9d6; }
+#intro .keys { color: var(--muted); font-size: 12px; margin: 10px 0 18px; }
+#intro b { color: var(--gold); }
+#startBtn {
+  font-family: var(--mono); font-size: 15px; font-weight: 700; letter-spacing: .15em;
+  background: var(--gold); color: #222; border: 0; padding: 12px 34px; cursor: pointer; box-shadow: 4px 4px 0 #000a;
+}
+#startBtn:disabled { background: #3a3a4a; color: #888; cursor: wait; }
+#done a, .dead {
+  font-family: var(--mono); font-size: 12px; letter-spacing: .1em; text-decoration: none;
+  color: var(--muted); border: 2px solid var(--line); padding: 11px 16px; margin: 0 5px; display: inline-block;
+  background: transparent; cursor: pointer;
+}
+#done a:hover, .dead:hover { color: #fff; border-color: var(--primary); }
+.urlrow { display: flex; gap: 8px; margin: 0 0 18px; }
+.urlrow input {
+  flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; color: #e8e8ee;
+  background: #0b0b10; border: 2px solid var(--line); padding: 10px 12px; outline: none;
+}
+.urlrow input:focus { border-color: var(--primary); }
+.urlrow button {
+  font-family: var(--mono); font-size: 12px; letter-spacing: .08em; white-space: nowrap;
+  background: var(--primary); color: #fff; border: 0; padding: 10px 14px; cursor: pointer;
+}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage">
+    <div id="world">
+      <iframe id="target" title="目标网站"></iframe>
+      <canvas id="fx"></canvas>
+      <div id="ball"><div id="spin"><img id="ballImg" src="/clawd/clawd-idle.gif" alt=""><div id="clutter"></div></div></div>
+    </div>
+    <div id="loading"><span>目标网站加载中…</span></div>
+  </div>
+
+  <div id="hud">
+    <div id="hudTitle">已擦除 <b id="cnt">0</b>/<span id="tot">?</span> 个元素 · 覆盖率 <b id="cov">0%</b></div>
+    <div id="hudBar"><div id="hudFill"></div></div>
+    <div id="hint">方向键 / WASD 滚动 · 碰到比自己小的元素就会粘上来 · 球越大能卷的越多</div>
+  </div>
+
+  <div id="intro">
+    <div class="panel">
+      <h1>🧽 clawd 橡皮擦</h1>
+      <p>clawd 变成一块<b>不会变大的橡皮擦</b>，在<b>真实页面</b>上滚一圈——滚过哪里，哪里的字和图片就被擦成空白，留下一个个白色的洞。小元素直接擦掉，<b>大块内容用网格整块擦除</b>。转圈照旧，只是不再越滚越大。</p>
+      <div class="urlrow">
+        <input id="urlInput" type="url" placeholder="输入任意网页地址…" autocomplete="off">
+        <button id="urlBtn" type="button">擦这个网页</button>
+      </div>
+      <button id="startBtn" disabled>目标加载中…</button>
+      <p class="fine">橡皮擦灵感来自 Katamari Damacy 与"把网站卷起来"的推文。默认擦的是自己家的首页，用书签（见 README）可以擦任意网页。</p>
+    </div>
+  </div>
+    </div>
+  </div>
+</div>
+<script>
+(() => {
+"use strict";
+const $ = (id) => document.getElementById(id);
+const world = $("world"), target = $("target"), fx = $("fx"),
+      loading = $("loading"), ballEl = $("ball"),
+      intro = $("intro"), startBtn = $("startBtn");
+const ctx = fx.getContext("2d");
+
+const ERASER_WIN = 0.8;              // 覆盖率 80% 通关
+const isCoarse = matchMedia("(pointer: coarse)").matches;
+const MAX_FRAGS = isCoarse ? 40 : 90;        // 球面碎片上限：触屏更省
+const MAX_PARTICLES = isCoarse ? 200 : 600;  // 像素粒子上限（destroy 同款预算）
+
+// 书签模式：?url=<绝对地址> → 页面经 /api/mirror/ 同源镜像（点 iframe 内链接也不会离开游戏）
+// 站内模式（默认）：直接嵌入站内页面，最快。
+function targetSrc() {
+  const p = new URLSearchParams(location.search);
+  const u = p.get("url");
+  if (u && /^https?:\/\//i.test(u)) {
+    try {
+      const b = btoa(unescape(encodeURIComponent(u))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      return "/api/mirror/" + b;
+    } catch (e) {}
+  }
+  return "/";
+}
+target.src = targetSrc();
+
+const S = {
+  started: false, over: false,
+  bx: 300, by: 60, vx: 0, vy: 0, r: 26, angle: 0,   // r 固定：橡皮擦不长大
+  camX: 0, camY: 0,
+  worldW: innerWidth, worldH: 1000, docH: 600,
+  els: [], total: 0, collected: 0, totalArea: 1, collectedArea: 0,
+  containerReg: new Map(),
+  clutter: [], keys: {}, t0: 0, muted: false,
+};
+
+// ---------- 音效 ----------
+let actx = null;
+const ac = () => actx || (actx = new (window.AudioContext || window.webkitAudioContext)());
+function sfx() {
+  if (S.muted) return;
+  try {
+    const a = ac(), t = a.currentTime;
+    const o = a.createOscillator(), g = a.createGain();
+    o.type = "triangle";
+    const base = 300 + Math.min(500, S.r * 4);
+    o.frequency.setValueAtTime(base, t); o.frequency.exponentialRampToValueAtTime(base * 1.8, t + 0.09);
+    g.gain.setValueAtTime(0.09, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+    o.connect(g).connect(a.destination); o.start(t); o.stop(t + 0.11);
+  } catch (e) {}
+}
+
+// ---------- 目标文档 ----------
+const doc = () => { try { return target.contentDocument; } catch (e) { return null; } };
+const SKIP_TAGS = new Set(["html", "body", "head", "script", "style", "link", "meta",
+  "noscript", "title", "br", "template"]);
+
+function isVisibleEl(el) {
+  if (el.checkVisibility && !el.checkVisibility({ contentVisibilityAuto: true, visibility: true })) return false;
+  return true;
+}
+
+function isTransparent(c) {
+  return !c || c === "transparent" || /rgba?\([^)]*,\s*0\)/.test(c);
+}
+
+// 元素自身「看得见的内容」判定：<img>/<video>/<canvas>/<picture> 标签、
+// 自己直接挂文字、或有 no-repeat 背景图（logo/图标/栏目图这类 CSS 背景内容）。
+// 纯容器（文字全在子孙里、无背景图）不是靶子——否则最大的容器被一碰就整块擦掉。
+function hasVisualContent(d, el) {
+  const tag = el.tagName;
+  if (tag === "IMG" || tag === "VIDEO" || tag === "CANVAS" || tag === "PICTURE" || tag === "IFRAME") return true;
+  if (ownChars(el) > 0) return true;
+  const cs = d.defaultView.getComputedStyle(el);
+  return !!cs.backgroundImage && cs.backgroundImage !== "none" && cs.backgroundRepeat !== "repeat" && cs.backgroundRepeat !== "repeat-x" && cs.backgroundRepeat !== "repeat-y";
+}
+// 直接子文本节点里的非空白字符数：靶子判定用（只有自己身上带字的才是靶子）
+function ownChars(el) {
+  let n = 0;
+  for (const nd of el.childNodes) {
+    if (nd.nodeType !== 3) continue;
+    for (let i = 0; i < nd.data.length; i++) if (!/\s/.test(nd.data[i])) n++;
+  }
+  return n;
+}
+
+// 纯容器是否有"可见盒子"（参与视觉布局）：背景/边框/盒子阴影有非透明色才算
+function isBoxy(d, el, cache) {
+  if (!cache.has(el)) {
+    const cs = d.defaultView.getComputedStyle(el);
+    const solid = (v) => v && v !== "none" && !isTransparent(v);
+    const b = solid(cs.backgroundColor) || solid(cs.borderTopColor) || solid(cs.boxShadow);
+    cache.set(el, b);
+  }
+  return cache.get(el);
+}
+
+// 容器注册：内容擦光后自动塌掉（background 透明 + 边框移除），页面视觉同样"擦干净"
+function registerContainer(d, el, cache) {
+  if (!S.containerReg.has(el)) {
+    const cs = d.defaultView.getComputedStyle(el);
+    S.containerReg.set(el, { el, cs, count: 0 });
+  }
+  return S.containerReg.get(el);
+}
+
+function buildEls() {
+  const d = doc();
+  if (!d || !d.body) return;
+  S.els = []; S.total = 0; S.totalArea = 1; S.collected = 0; S.collectedArea = 0;
+  S.containerReg = new Map();
+  const allEls = [...d.body.querySelectorAll("*")];
+  // 靶子：自己直接带字的元素或图片。纯容器不是靶子——
+  // 否则整页最大的容器（#content/#app 之类，占 80%+ 面积）被球一碰就整块擦掉，
+  // 覆盖率瞬间 ≥80% → "0 秒擦完全站"。容器改为内容擦光后自动塌掉（见下）。
+  const targetSet = new Set();
+  for (const el of allEls) {
+    if (SKIP_TAGS.has(el.tagName.toLowerCase()) || el.__absorbed) continue;
+    if (hasVisualContent(d, el)) targetSet.add(el);
+  }
+  const csCache = new Map();
+  for (const el of targetSet) {
+    if (!isVisibleEl(el)) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < 8 || r.height < 8) continue;
+    const cs = d.defaultView.getComputedStyle(el);
+    const bg = isTransparent(cs.backgroundColor) ? "" : cs.backgroundColor;
+    const fg = isTransparent(cs.color) ? "#e8e8ee" : cs.color;
+    const bgi = cs.backgroundImage;
+    const bgImg = (bgi && bgi !== "none") ? bgi : "";   // CSS 背景图（url(...)），碎片判定用
+    const txt = (el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 20);
+    const e = {
+      el, x: r.x, y: r.y, w: r.width, h: r.height, area: r.width * r.height,
+      color: bg || fg, bg, fg, bgImg, text: txt,
+      fontFamily: cs.fontFamily, fontWeight: cs.fontWeight, fontSize: parseFloat(cs.fontSize) || 14,
+      isImg: el.tagName === "IMG", isMedia: ["IMG","VIDEO","CANVAS","PICTURE"].includes(el.tagName),
+      absorbed: false, collapser: null,
+    };
+    // 最近的可折叠容器祖先（有可见盒子、不是靶子的纯容器）——该容器记一个"单元"
+    let p = el.parentElement;
+    while (p && p !== d.body) {
+      if (!targetSet.has(p) && !SKIP_TAGS.has(p.tagName.toLowerCase()) && isBoxy(d, p, csCache)) {
+        const reg = registerContainer(d, p, csCache);
+        e.collapser = reg; reg.count++;
+        break;
+      }
+      p = p.parentElement;
+    }
+    S.els.push(e);
+    S.total++; S.totalArea += r.width * r.height;
+  }
+}
+
+// ---------- 大块内容：整块擦掉（网格白点 + 文字替换 + 图片清空 + 子树隐藏） ----------
+function blankBig(e) {
+  const D = 20, N = Math.max(2, Math.min(40, Math.round((e.w / D) * (e.h / D))));
+  for (let i = 0; i < N; i++) {
+    const span = document.createElement("span");
+    span.className = "mask";
+    span.style.cssText = "position:absolute;left:" + (e.x + Math.random() * e.w) + "px;top:" + (e.y + Math.random() * e.h) +
+      "px;width:8px;height:8px;background:#fff;z-index:3;pointer-events:none;";
+    world.appendChild(span);   // 挂进 #world，跟着页面一起滚动
+  }
+  const d = doc();
+  const root = e.el;
+  // 把可见子树清干净：文字换成不换行空格（保持布局、肉眼全空）
+  const lines = d.evaluate(".//text()", root, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+  for (let i = 0; i < lines.snapshotLength; i++) {
+    const tx = lines.snapshotItem(i);
+    if (tx.parentNode && /^(SCRIPT|STYLE)$/.test(tx.parentNode.nodeName)) continue;
+    const orig = tx.textContent;
+    if (orig.trim() && !/^\s*$/.test(orig)) tx.textContent = orig.replace(/\S/g, " ");
+  }
+  // 图片换成同尺寸空白画布
+  const imgs = root.tagName === "IMG" ? [root] : [...root.querySelectorAll("img")];
+  imgs.forEach((im) => {
+    try {
+      const c = d.createElement("canvas");
+      c.width = Math.max(4, Math.min(240, im.naturalWidth || im.clientWidth || 40));
+      c.height = Math.max(4, Math.min(240, im.naturalHeight || im.clientHeight || 40));
+      c.style.maxWidth = "100%";
+      c.style.maxHeight = "100%";
+      if (im.parentNode) im.parentNode.replaceChild(c, im);
+      im.__absorbed = true;
+    } catch (ex) {}
+  });
+  root.__absorbed = true;
+  e.el.__blanking = true;
+}
+
+// ---------- 吸收（球径固定，纯橡皮擦） ----------
+function tryAbsorb() {
+  for (const e of S.els) {
+    if (e.absorbed) continue;
+    const nx = Math.max(e.x, Math.min(S.bx, e.x + e.w));
+    const ny = Math.max(e.y, Math.min(S.by, e.y + e.h));
+    const dx = nx - S.bx, dy = ny - S.by;
+    if (dx * dx + dy * dy > S.r * S.r) continue;
+    e.absorbed = true;
+    S.collected++; S.collectedArea += e.area;
+    // 只擦目标本身（球不长大）；大块元素也逐个擦、不整树抹掉——
+    // 否则全页最大的容器被一碰就整块清空，覆盖率瞬间 ≥80% → "0 秒擦完全站"
+    if (e.isImg && e.el.complete && e.el.naturalWidth && Math.max(e.w, e.h) > S.r * 2 + 6) {
+      if (!e.el.__blanking) blankBig(e);
+    } else if (e.isMedia) {
+      // video/canvas/picture/iframe：暂停播放后用 dm-done 隐藏（保持布局不动，
+      // 直接移除 DOM 会让下方内容整体上移、其他靶子的坐标全失效）
+      if (e.el.tagName === "VIDEO") { try { e.el.pause(); } catch (ex) {} }
+      e.el.classList.add("dm-done");
+      e.el.__absorbed = true;
+    } else {
+      e.el.classList.add("dm-done");
+      e.el.__absorbed = true;
+    }
+    // 容器塌掉：内容全擦光时收起纯容器的可见盒子（不再是空框残留）
+    if (e.collapser && e.collapser.count > 0) {
+      e.collapser.count--;
+      if (e.collapser.count === 0) {
+        e.collapser.el.style.background = "transparent";
+        e.collapser.el.style.borderColor = "transparent";
+        e.collapser.el.style.boxShadow = "none";
+        e.collapser.el.__absorbed = true;
+      }
+    }
+    addFrag(e);
+    addParticles(e, 6);
+    ballEl.classList.remove("pop"); void ballEl.offsetWidth; ballEl.classList.add("pop");
+    sfx();
+    updateHUD();
+  }
+}
+
+function addFrag(e) {
+  const clutterLayer = document.getElementById("clutter");
+  const d = doc();
+  const frag = d.createElement("div");
+  frag.className = "frag";
+  const fw = Math.max(10, Math.min(Math.max(e.w, e.h) / 1.4, S.r * 1.05));
+  const fh = Math.max(8, Math.min(fw * (e.h / Math.max(e.w, 1)), S.r * 0.75));
+  const a = Math.random() * Math.PI * 2;
+  const dist = S.r * (0.82 + Math.random() * 0.3) + fh / 2;
+  const tpos = "width:" + fw + "px;height:" + fh + "px;left:" + (50 + Math.cos(a) * dist / (S.r * 2) * 100) + "%;top:" + (50 + Math.sin(a) * dist / (S.r * 2) * 100) + "%;transform:translate(-50%,-50%) rotate(" + (a + Math.PI / 2) + "rad);";
+  if (e.isImg && e.el.complete && e.el.naturalWidth) {
+    const c = frag.appendChild(d.createElement("canvas"));
+    const maxW = 56, maxH = 56;
+    const iw = e.el.naturalWidth, ih = e.el.naturalHeight;
+    const sc = Math.min(1, maxW / iw, maxH / ih);
+    c.width = Math.max(8, iw * sc); c.height = Math.max(8, ih * sc);
+    try { c.getContext("2d").drawImage(e.el, 0, 0, c.width, c.height); } catch (ex) { frag.style.background = e.color; }
+    frag.style.cssText = tpos;
+  } else if (e.text) {
+    const fs = Math.max(8, Math.min(e.fontSize * (fh / Math.max(12, e.h)), fh * 0.9));
+    frag.textContent = e.text;
+    frag.style.cssText = tpos + "background:" + (e.bg || "transparent") + ";color:" + e.fg + ";font-family:" + e.fontFamily + ";font-weight:" + e.fontWeight + ";font-size:" + fs + "px;line-height:1.15;";
+  } else if (e.bg && e.bg !== "transparent" && /^url/.test(e.bg)) {
+    // CSS 背景图（logo/图标/栏目图）：碎片做成一个纯色占位块 + 底部原色条
+    frag.style.cssText = tpos + "background:rgba(160,170,200,0.5);border:1px solid rgba(120,130,160,0.8);";
+  } else {
+    frag.style.cssText = tpos + "background:" + e.color + ";";
+  }
+  clutterLayer.appendChild(frag);
+  while (clutterLayer.children.length > MAX_FRAGS) clutterLayer.firstElementChild.remove();
+}
+
+// ---------- 像素粒子（DOM 元素，挂进 #world 随页面滚动） ----------
+function addParticles(e, n) {
+  for (let i = 0; i < n; i++) {
+    if (S.clutter.length >= MAX_PARTICLES) break;
+    const px = e.x + Math.random() * e.w, py = e.y + Math.random() * e.h;
+    const cs = (e.text && Math.random() < 0.5) ? e.fg : e.color;
+    if (!e.text && cs === "#fff") continue;
+    const p = document.createElement("div");
+    p.className = "pix";
+    p.style.cssText = "position:absolute;left:" + px + "px;top:" + py + "px;width:4px;height:4px;background:" + cs + ";z-index:3;pointer-events:none;";
+    world.appendChild(p);
+    S.clutter.push({ el: p, x: px, y: py, vx: (Math.random() - 0.5) * 2, vy: -Math.random() * 2.2, life: 0.4 + Math.random() * 0.6 });
+  }
+}
+
+function stepParticles(dt) {
+  for (let i = S.clutter.length - 1; i >= 0; i--) {
+    const p = S.clutter[i];
+    p.life -= dt;
+    if (p.life <= 0) { if (p.el.parentNode) p.el.remove(); S.clutter.splice(i, 1); continue; }
+    p.x += p.vx; p.y += p.vy; p.vy += 0.6 * dt * 60;
+    p.el.style.left = p.x + "px"; p.el.style.top = p.y + "px";
+  }
+}
+
+function updateHUD() {
+  const cover = Math.min(100, Math.round((S.collectedArea / S.totalArea) * 100));
+  $("cnt").textContent = S.collected;
+  $("cov").textContent = cover + "%";
+  $("hudFill").style.width = cover + "%";
+}
+
+
+// ---------- 主循环 ----------
+let lastT = 0;
+function loop(t) {
+  requestAnimationFrame(loop);
+  const dt = Math.min(0.05, (t - lastT) / 1000 || 0.016);
+  lastT = t;
+  if (joyEl) {
+    const show = S.started && !S.over;
+    if (show !== joyShown) { joyEl.style.display = show ? "block" : "none"; joyShown = show; }
+  }
+  if (!S.started) return;
+
+  let ax = 0, ay = 0;
+  if (S.keys["arrowleft"] || S.keys["a"]) ax -= 1;
+  if (S.keys["arrowright"] || S.keys["d"]) ax += 1;
+  if (S.keys["arrowup"] || S.keys["w"]) ay -= 1;
+  if (S.keys["arrowdown"] || S.keys["s"]) ay += 1;
+  const acc = 0.55;
+  S.vx += ax * acc; S.vy += ay * acc;
+  const sp = Math.hypot(S.vx, S.vy), maxSp = 8;  // 球径固定，速度也固定
+  if (sp > maxSp) { S.vx *= maxSp / sp; S.vy *= maxSp / sp; }
+  S.vx *= 0.985; S.vy *= 0.985;
+  S.bx = Math.max(S.r, Math.min(S.worldW - S.r, S.bx + S.vx));
+  S.by = Math.max(S.r, Math.min(S.worldH - S.r, S.by + S.vy));
+  const dist = Math.hypot(S.vx, S.vy);
+  S.angle += dist / Math.max(8, S.r);  // 转圈照旧
+  const spinLayer = document.getElementById("spin");
+  if (spinLayer) spinLayer.style.transform = "rotate(" + S.angle + "rad)";
+
+  tryAbsorb();
+
+  const viewH = innerHeight;
+  const ty = Math.max(0, Math.min(S.worldH - viewH, S.by - viewH / 2));
+  S.camY += (ty - S.camY) * 0.14;
+  world.style.transform = `translateY(${-S.camY}px)`;
+  ballEl.style.left = S.bx - S.r + "px";
+  ballEl.style.top = S.by - S.r + "px";
+  ballEl.style.width = S.r * 2 + "px";
+  ballEl.style.height = S.r * 2 + "px";
+
+  stepParticles(dt);
+}
+
+// ---------- 输入 ----------
+const KEY_MAP = { KeyW: "w", KeyA: "a", KeyS: "s", KeyD: "d", ArrowUp: "arrowup", ArrowDown: "arrowdown", ArrowLeft: "arrowleft", ArrowRight: "arrowright", Space: " " };
+addEventListener("keydown", (e) => {
+  const k = KEY_MAP[e.code] || e.key.toLowerCase();
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(k)) e.preventDefault();
+  S.keys[k] = true;
+});
+addEventListener("keyup", (e) => { const k = KEY_MAP[e.code] || e.key.toLowerCase(); S.keys[k] = false; });
+addEventListener("resize", () => { fx.width = S.worldW = innerWidth; });
+addEventListener("touchmove", (e) => { e.preventDefault(); }, { passive: false });
+
+// ---------- 虚拟摇杆（仅触屏设备） ----------
+const joy = { id: -1, dx: 0, dy: 0 };
+let joyShown = false;
+addEventListener("pointercancel", joyRelease);
+
+// ---------- 开局 ----------
+function startGame() {
+  if (startBtn.disabled) return;
+  if (innerWidth < 700) S.bx = innerWidth / 2;
+  S.started = true; S.t0 = performance.now();
+  try { ac().resume(); } catch (e) {}
+  intro.style.display = "none";
+}
+startBtn.addEventListener("click", startGame);
+$("urlBtn").addEventListener("click", () => {
+  let u = $("urlInput").value.trim();
+  if (!u) return;
+  if (!/^https?:\/\//i.test(u)) u = "https://" + u;
+  location.href = location.pathname + "?url=" + encodeURIComponent(u);
+});
+$("urlInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); $("urlBtn").click(); }
+});
+
+// iframe 就绪
+let inited = false;
+function initTarget() {
+  if (inited) return true;
+  const d = doc();
+  if (!d || !d.body || d.readyState !== "complete" || d.location.href === "about:blank") return false;
+  inited = true;
+  // 关键：.dm-done 的样式定义在游戏页（外层文档），不会穿透进 iframe——
+  // 不注入的话，被擦除的元素加了 class 但页面上的字根本不会消失。
+  // 同源 iframe，直接把样式标签打进目标文档。
+  if (!d.getElementById("dm-style")) {
+    const st = d.createElement("style");
+    st.id = "dm-style";
+    st.textContent = ".dm-done{visibility:hidden !important;}";
+    (d.head || d.documentElement).appendChild(st);
+  }
+  d.querySelectorAll('details:not([open])').forEach((x) => { x.open = true; });
+  S.docH = Math.max(600, d.documentElement.scrollHeight);
+  target.style.height = S.docH + "px";
+  S.worldH = S.docH + 40;
+  world.style.height = S.worldH + "px";
+  buildEls();
+  fx.width = S.worldW = innerWidth; fx.height = S.worldH;
+  ballEl.style.left = S.bx - S.r + "px";
+  ballEl.style.top = S.by - S.r + "px";
+  ballEl.style.width = S.r * 2 + "px";
+  ballEl.style.height = S.r * 2 + "px";
+  $("tot").textContent = S.total;
+  updateHUD();
+  // 页面长高跟随：懒加载图片/分段展开会撑高文档，跟随拉高 iframe
+  let hwTries = 0;
+  if (S.heightWatch) clearInterval(S.heightWatch);
+  S.heightWatch = setInterval(() => {
+    const dd = doc();
+    if (!dd) return;
+    const h2 = Math.max(600, dd.documentElement.scrollHeight);
+    if (h2 > S.docH + 8) { S.docH = h2; target.style.height = h2 + "px"; S.worldH = h2 + 40; world.style.height = S.worldH + "px"; }
+    if (++hwTries > 25) { clearInterval(S.heightWatch); S.heightWatch = null; }
+  }, 1300);
+  // 外站镜像模式：快速滚到底再回顶，触发懒加载图片与分段展开
+  if (location.search.includes("url=")) {
+    (async () => {
+      const dd = doc(); if (!dd) return;
+      const stepSize = Math.max(500, innerHeight);
+      for (let y = 0; y <= S.docH; y += stepSize) { dd.documentElement.scrollTop = y; await new Promise(r => setTimeout(r, 170)); }
+      dd.documentElement.scrollTop = 0;
+    })();
+  }
+  loading.classList.add("done");
+  if (startBtn.disabled) { startBtn.disabled = false; startBtn.textContent = "开 擦"; }
+  return true;
+}
+target.addEventListener("load", () => setTimeout(initTarget, 300));
+const readyPoll = setInterval(() => { if (initTarget()) clearInterval(readyPoll); }, 150);
+
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

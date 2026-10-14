@@ -122,6 +122,49 @@ Then restore any time with:
 
 ## Gotchas worth knowing
 
+**The native USB port can strand the chip in download mode.** The USB-C connector
+goes straight to the chip's USB-Serial/JTAG peripheral — there is no USB-to-UART
+bridge and no auto-reset transistor circuit. On the chip, asserting **DTR requests
+download mode on the next reset**, and pyserial asserts DTR by default when a port
+is opened. So a naive serial script can leave the board sitting at
+`boot:0x2 (DOWNLOAD(USB/UART0)) / waiting for download` — black screen, unresponsive,
+and plain resets keep landing back in download mode.
+
+Recovery, in order of convenience:
+
+1. **Watchdog reset via esptool** — usually enough to break the sticky state and boot
+   the application, with no physical access needed:
+
+   ```bash
+   esptool --chip esp32s3 --port COM3 --baud 921600 \
+       --after watchdog_reset --connect-attempts 1 read_mac
+   ```
+
+   A watchdog reset takes a different path than the RTS/EN reset, so it does not
+   re-enter download mode. Verify success by attempting a connect with **no reset** —
+   *if it times out, the application is running* (a live app never answers the ROM's
+   sync handshake):
+
+   ```bash
+   esptool --chip esp32s3 --port COM3 --before no_reset --after no_reset read_mac
+   # "Write timeout" / connection failure here means SUCCESS
+   ```
+
+   Careful: a plain `esptool ... read_mac` uses `--before default_reset`, which puts
+   the chip back into download mode. Only the `no_reset` form is a safe probe.
+
+2. **Cold power cycle** — always works: unplug USB (and if a battery is attached,
+   long-press PWR 2s to power off, then short-press to power on). A cold boot samples
+   the strapping pins correctly with GPIO0 pulled high.
+
+Use `tools/serial_monitor.py` instead of ad-hoc pyserial code — it never asserts DTR
+and never pulses RTS, so it attaches and detaches without disturbing a running app:
+
+```bash
+python tools/serial_monitor.py COM3 115200
+python tools/serial_monitor.py COM3 --seconds 20     # bounded capture
+```
+
 **Never let esptool rewrite the image header when restoring a dump.** When writing
 a raw flash dump at `0x0`, esptool patches the flash-parameter byte (offset 2, SPI
 mode) if you pass `--flash_mode` / `--flash_size` / `--flash_freq`. The stock
