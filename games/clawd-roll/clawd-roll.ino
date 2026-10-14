@@ -100,14 +100,15 @@ static const unsigned long EXIT_HOLD_MS      = 2000;
 // Which in-plane accelerometer axis drives screen X and screen Y, and with which
 // sign. The axis perpendicular to the screen is found automatically at boot (it is
 // the one carrying gravity when the board lies flat), so only the in-plane
-// assignment has to be established empirically. AXIS_X / AXIS_Y index into the two
-// in-plane axes in ascending hardware order.
+// assignment has to be established empirically.
 //
-// Serial output reports the detected axes and live values, so the mapping can be
-// confirmed by tilting the board and watching which number moves.
+// Verified on hardware: with the board flat and the screen up, the perpendicular
+// axis is z, the in-plane axes are x and y in that order, Y maps directly, and X is
+// inverted -- tilting the board to the right has to send clawd to the right, which
+// is the opposite of what the raw axis reports.
 static const int AXIS_X = 0;
 static const int AXIS_Y = 1;
-static const int SIGN_X = +1;
+static const int SIGN_X = -1;
 static const int SIGN_Y = +1;
 
 // ---------------------------------------------------------------- rendering --
