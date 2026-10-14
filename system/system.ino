@@ -37,6 +37,7 @@
 #include "gfx.h"
 #include "input.h"
 #include "launcher.h"
+#include "clock.h"
 #include "power.h"
 #include "sound.h"
 
@@ -193,6 +194,9 @@ void setup()
     // already up, and a failed codec must not stop the launcher from starting.
     sound::begin();
 
+    // After the I2C bus is up, which the RTC shares with everything else.
+    sysclock::begin();
+
     launcher::begin(GAMES, GAME_COUNT);
 
     showSplash();
@@ -210,9 +214,35 @@ void loop()
     lastMs = now;
     if (dt <= 0.0f || dt > 0.1f) dt = 1.0f / 60.0f;
 
+    // A time from the host: "T<epoch>" then a newline on the serial line. This is how
+    // the RTC gets set -- once, from the machine that knows what time it is -- rather
+    // than the firmware bringing up a radio to ask.
+    {
+        static char cmd[24];
+        static int n = 0;
+        while (Serial.available()) {
+            const char c = (char)Serial.read();
+            if (c == 0x0A || c == 0x0D) {
+                cmd[n] = 0;
+                if (n > 1 && cmd[0] == 'T') {
+                    const long long epoch = atoll(cmd + 1);
+                    if (epoch > 1700000000) {
+                        struct timeval tv = { (time_t)epoch, 0 };
+                        settimeofday(&tv, nullptr);
+                        sysclock::writeFromSystem();
+                    }
+                }
+                n = 0;
+            } else if (n < 23) {
+                cmd[n++] = c;
+            }
+        }
+    }
+
     input::update(dt);
     power::poll(now);      // the fuel gauge, at most every couple of seconds
     sound::update();       // keeps the I2S fed: silence when nothing is sounding
+    sysclock::update(now); // fetches the time over wifi only if the RTC cannot supply it
     handleBootButton();
 
     int bandY0 = 0;

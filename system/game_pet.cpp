@@ -10,6 +10,7 @@
 #include "Display_ST77916.h"
 #include "esp_random.h"
 #include "assets_icons.h"
+#include "clock.h"
 #include "assets_pet.h"
 #include "gfx.h"
 #include "input.h"
@@ -977,8 +978,8 @@ void GamePet::render()
     gfx::clear(COL_BG);
 
     char head[48];
-    snprintf(head, sizeof(head), "%s  |  %s  |  %02d:%02d", S.name, STAGE_NAMES[S.stage],
-             (int)(S.ageSec / 3600) % 100, (int)(S.ageSec / 60) % 60);
+    snprintf(head, sizeof(head), "%s  |  %s  |  %s", S.name, STAGE_NAMES[S.stage],
+             sysclock::timeText());
     gfx::textCentered(head, HEAD_Y, COL_ACCENT, 1);
     gfx::fillRect(RULE_X0, RULE1_Y, RULE_X1 - RULE_X0, 1, COL_RULE);
 

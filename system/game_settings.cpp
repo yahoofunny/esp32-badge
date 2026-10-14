@@ -16,6 +16,7 @@
 #include "gfx.h"
 #include "input.h"
 #include "power.h"
+#include "clock.h"
 #include "sound.h"
 
 // ------------------------------------------------------------------ layout -----
@@ -388,9 +389,15 @@ void GameSettings::updateVolume()
 
 void GameSettings::updateInfo()
 {
-    if (input::tapped() && inRect(input::tapX(), input::tapY(), BACK_X0, 14, BACK_X1, 48)) {
+    if (!input::tapped()) return;
+    if (inRect(input::tapX(), input::tapY(), BACK_X0, 14, BACK_X1, 48)) {
         enterPage(PAGE_MENU);
+        return;
     }
+    // Anywhere else on these pages starts a time sync. They are otherwise read-only, so
+    // there is nothing to collide with, and a manual retry is what someone wants when the
+    // clock is wrong and the badge has been out of range of the network.
+    sysclock::writeFromSystem();
 }
 
 void GameSettings::update(float dt)
@@ -497,7 +504,7 @@ void GameSettings::renderSystem()
     gfx::clear(COL_BG);
     renderBack();
 
-    char v[10][28];
+    char v[11][28];
 
     snprintf(v[0], sizeof(v[0]), "%s r%d", ESP.getChipModel(), (int)ESP.getChipRevision());
     snprintf(v[1], sizeof(v[1]), "%d @ %d MHz", (int)ESP.getChipCores(),
@@ -518,6 +525,9 @@ void GameSettings::renderSystem()
     const esp_partition_t *run = esp_ota_get_running_partition();
     snprintf(v[9], sizeof(v[9]), "%s", run ? run->label : "?");
 
+    snprintf(v[10], sizeof(v[10]), "%s  %s", sysclock::timeText(),
+             sysclock::sourceText());
+
     row(0, "chip",    v[0], COL_TEXT);
     row(1, "cores",   v[1], COL_TEXT);
     row(2, "flash",   v[2], COL_TEXT);
@@ -529,6 +539,9 @@ void GameSettings::renderSystem()
     row(8, "battery", v[8], b.valid && b.percent < 20 ? COL_WARN
                                                      : COL_TEXT);
     row(9, "running", v[9], COL_TEXT);
+    row(10, "time", v[10], sysclock::valid() ? COL_TEXT : COL_DIM);
+    gfx::textCentered("tap to write the clock to the RTC",
+                      ROW_Y0 + 12 * ROW_PITCH, COL_DIM, 1);
 }
 
 void GameSettings::renderNet()

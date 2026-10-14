@@ -5,6 +5,7 @@
 
 #include "gfx.h"
 #include "input.h"
+#include "clock.h"
 #include "sound.h"
 
 namespace launcher {
@@ -257,8 +258,10 @@ void render()
         drawIconAt(i, (i == launching) ? selBoost : 1.0f);
     }
 
-    // Names: the selected entry under the ring, and a hint line along the bottom.
+    // Names: the selected entry under the ring, and a hint line along the bottom. The
+    // time goes above it, top left, where it cannot collide with the ring.
     if (launching < 0) {
+        gfx::text(sysclock::timeText(), 62, 48, COL_HINT, 1);
         gfx::textCentered(g_games[selIndex()]->name(), (int)(SCR_CY + ORBIT_Y) + 34, COL_LABEL, 2);
         // Kept short on purpose. Only about 176 of the 360 px of width are visible
         // at this height, and the earlier longer wording ("tilt to browse - tap to
