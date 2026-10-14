@@ -24,6 +24,7 @@ public:
     void update(float dt) override;
     void render() override;
 
+
 private:
     enum Page { PAGE_MENU, PAGE_VOLUME, PAGE_SYSTEM, PAGE_NET, PAGE_USB };
 

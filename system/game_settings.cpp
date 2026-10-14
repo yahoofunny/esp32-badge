@@ -122,6 +122,10 @@ void GameSettings::apply(int percent)
 static const int SD_PINS_CLK = 15, SD_PINS_CMD = 14;
 static const int SD_PINS_D0 = 16, SD_PINS_D1 = 17, SD_PINS_D2 = 12, SD_PINS_D3 = 13;
 
+// A couple of block reads is what mounting a volume looks like; below that the
+// "finished" signal is the enumeration talking, not the user.
+static const uint32_t MIN_TRAFFIC_FOR_EJECT = 2;
+
 static USBMSC usbMsc;
 static volatile bool usbHostGone = false;
 static volatile uint32_t usbTraffic = 0;      // bumped by every host request
@@ -238,7 +242,11 @@ void GameSettings::updateUsb()
     if (usbState == USB_MOUNTED) {
         const float dt = 1.0f / 60.0f;
         usbIdleSec += dt;
-        usbEjectedSec = usbHostEjected ? usbEjectedSec + dt : 0.0f;
+        // Only trust the host's "finished" once the host has actually read or written
+        // something. The first enumeration can produce the signal on its own, and the mode
+        // then closed ten seconds later -- before a single file could be copied.
+        usbEjectedSec = (usbHostEjected && usbTraffic >= MIN_TRAFFIC_FOR_EJECT)
+                            ? usbEjectedSec + dt : 0.0f;
         if ((usbHostEjected && usbEjectedSec > 10.0f) || usbIdleSec > 300.0f) {
             usbStopAndReboot();
             return;
