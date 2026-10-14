@@ -59,26 +59,45 @@ static const uint32_t SAVE_MAGIC = 0x50544543;   // 'CETP'
 // Everything here is checked against the round bezel: the usable width at row y is
 // 2*sqrt(R^2 - (y-cy)^2), R = 180, which is only about 274 px at the height of the
 // heart meters and 229 px at the icon row.
+// A terminal layout: a header line, a rule, two labelled meter rows, the creature,
+// the last message, another rule, and a text menu of actions.
+static const int HEAD_Y  = 44;
+static const int RULE1_Y = 60;
+static const int RULE2_Y = 272;
+static const int RULE_X0 = 62, RULE_X1 = 298;
+
 static const int HEART_TOTAL = 4;
 static const int HEART_PITCH = 13;
-static const int HEART_Y     = 52;
-static const int HEART_LEFT_X  = 62;
-static const int HEART_RIGHT_X = 259;
 
-static const float PET_CX = 180.0f, PET_CY = 172.0f;
+static const int METER_LABEL_RIGHT = 168;   // labels are right-aligned to here
+static const int METER_HEART_X     = 180;   // so the hearts line up
+static const int METER_Y0          = 76;
+static const int METER_PITCH       = 18;
 
-static const int MSG_Y = 266;
+static const float PET_CX = 180.0f, PET_CY = 176.0f;
 
-static const int ICON_PITCH = 33;
-static const int ICON_Y     = 300;
-static const int ICON_HALF  = 13;
+static const int MSG_Y = 250;
+
+static const int MENU_Y0    = 288;
+static const int MENU_PITCH = 18;
 
 // ------------------------------------------------------------------ colours ---
-// Three tones, not a palette. The original is a monochrome LCD, and dressing this app
-// in the system's dark theme is precisely what stopped it reading as a virtual pet.
-static const uint16_t LCD_BG  = PX(RGB565(0xA8, 0xB4, 0x8C));
-static const uint16_t LCD_INK = PX(RGB565(0x1A, 0x1E, 0x14));
-static const uint16_t LCD_DIM = PX(RGB565(0x7E, 0x8A, 0x66));
+// The dark theme plus the pet's own palette.
+//
+// A monochrome-LCD imitation was tried here and dropped. It was faithful to the
+// original hardware, but it threw away the artwork's colours -- which is most of what
+// makes the creature appealing -- on a display perfectly capable of showing them.
+// What is kept from the original is the structure: two heart meters, life stages, and
+// care actions, rather than the 1996 palette.
+static const uint16_t COL_BG          = PX(RGB565(0x0E, 0x0E, 0x16));
+static const uint16_t COL_TEXT        = PX(RGB565(0xEC, 0xEC, 0xF4));
+static const uint16_t COL_DIM         = PX(RGB565(0x6E, 0x6E, 0x80));
+static const uint16_t COL_RULE        = PX(RGB565(0x2A, 0x2A, 0x3A));
+static const uint16_t COL_HEART_FULL  = PX(RGB565(0xFF, 0x5A, 0x7A));
+static const uint16_t COL_HEART_EMPTY = PX(RGB565(0x33, 0x33, 0x42));
+// The same rust the creature is drawn in, and the same one Claude Code uses. It is
+// the single accent for anything that is a label rather than a value.
+static const uint16_t COL_ACCENT      = PX(RGB565(0xD9, 0x77, 0x57));
 
 // ------------------------------------------------------------------ buttons ---
 enum { ACT_FEED, ACT_SNACK, ACT_PLAY, ACT_WASH, ACT_CLEAN, ACT_MED, ACT_SLEEP, ACT_COUNT };
@@ -393,10 +412,8 @@ void GamePet::drawIcon(float cx, float cy, float size) const
         for (int x = 0; x < s.w; x++) {
             const uint8_t idx = (s.bits[y * s.rowBytes + (x >> 1)] >> ((x & 1) * 4)) & 0x0F;
             if (!idx) continue;
-            // 1 = body, 2 = eyes, 3 = eye highlight; only the body takes ink.
             gfx::fillRect((int)(ox + x * scale), (int)(oy + y * scale),
-                          (int)ceilf(scale), (int)ceilf(scale),
-                          (idx == 1) ? LCD_INK : LCD_BG);
+                          (int)ceilf(scale), (int)ceilf(scale), PX(pet_palette[idx]));
         }
     }
 }
@@ -424,18 +441,15 @@ void GamePet::drawPetSprite()
         for (int x = 0; x < s.w; x++) {
             const uint8_t idx = (s.bits[y * s.rowBytes + (x >> 1)] >> ((x & 1) * 4)) & 0x0F;
             if (!idx) continue;
-            // Monochrome, as the original LCD is: body in ink, eyes and their
-            // highlight punched out to the background colour.
-            const uint16_t c = (idx == 1) ? LCD_INK : LCD_BG;
             gfx::fillRect((int)lroundf(ox + x * scale), (int)lroundf(oy + y * scale),
-                          (int)scale, (int)scale, c);
+                          (int)scale, (int)scale, PX(pet_palette[idx]));
         }
     }
 }
 
 void GamePet::drawHeart(int cx, int cy, bool filled)
 {
-    const uint16_t c = filled ? LCD_INK : LCD_DIM;
+    const uint16_t c = filled ? COL_HEART_FULL : COL_HEART_EMPTY;
     gfx::fillCircle(cx - 2.0f, cy - 1.0f, 2.2f, c);
     gfx::fillCircle(cx + 2.0f, cy - 1.0f, 2.2f, c);
     for (int i = 0; i < 5; i++) {
@@ -452,12 +466,25 @@ void GamePet::drawHearts(int x, int y, int filled, int total)
 
 void GamePet::drawHeartMeters()
 {
-    // Two meters of four, the original's read-out for hunger and happiness. Hearts
-    // empty as the need gets worse, so they read the same way round as the bars did.
+    // Two meters of four, the original's read-out for hunger and happiness, with the
+    // labels spelled out to the left. Four hearts is what the original shows; naming
+    // them is borrowed from the terminal idiom the rest of the screen uses.
     const int hungerHearts = (int)lroundf((100.0f - S.hunger) / (100.0f / HEART_TOTAL));
     const int funHearts    = (int)lroundf((100.0f - S.fun)    / (100.0f / HEART_TOTAL));
-    drawHearts(HEART_LEFT_X, HEART_Y, hungerHearts, HEART_TOTAL);
-    drawHearts(HEART_RIGHT_X, HEART_Y, funHearts, HEART_TOTAL);
+
+    const char *names[2] = { "HUNGER", "HAPPY" };
+    const int vals[2] = { hungerHearts, funHearts };
+    for (int i = 0; i < 2; i++) {
+        const int y = METER_Y0 + i * METER_PITCH;
+        const int w = gfx::textWidth(names[i], 1);
+        gfx::text(names[i], METER_LABEL_RIGHT - w, y, COL_DIM, 1);
+        drawHearts(METER_HEART_X, y + 3, vals[i], HEART_TOTAL);
+    }
+}
+
+void GamePet::drawRule(int y)
+{
+    gfx::fillRect(RULE_X0, y, RULE_X1 - RULE_X0, 1, COL_RULE);
 }
 
 // The action pictograms. Solid shapes only: a tile is drawn either as ink on the
@@ -504,41 +531,56 @@ static void (*const ACT_GLYPH[ACT_COUNT])(int, int, uint16_t) = {
     glyph_bowl, glyph_candy, glyph_ball, glyph_drop, glyph_broom, glyph_cross, glyph_zzz,
 };
 
-void GamePet::layoutIcons(float *xs, float *ys, float *half, bool *enabled, int *count) const
+// The actions are a text menu, two rows of words, with the last one used highlighted.
+// A row of pictograms was tried first and abandoned: seven hand-drawn glyphs at 22 px
+// are guesswork, and nothing about a bowl or a broom tells you it means feed or clean.
+// In a terminal idiom the names are simply spelled out.
+void GamePet::layoutMenu(float *xs, float *ys, float *ws, bool *enabled, int *count) const
 {
-    const float x0 = SCR_CX - (ACT_COUNT - 1) * ICON_PITCH * 0.5f;
-    for (int i = 0; i < ACT_COUNT; i++) {
-        xs[i] = x0 + i * ICON_PITCH;
-        ys[i] = ICON_Y;
-        half[i] = ICON_HALF;
-        // Clean and medicine only mean something when there is something to do, but
-        // they stay on screen dimmed so no tile ever moves under the finger.
-        enabled[i] = (i == ACT_CLEAN) ? has(PF_POOP)
-                   : (i == ACT_MED)   ? has(PF_SICK)
-                   : true;
+    const int rowSplit = 4;                        // four on the first row, three after
+    const float gap = 14.0f;
+
+    for (int row = 0; row < 2; row++) {
+        const int first = (row == 0) ? 0 : rowSplit;
+        const int last  = (row == 0) ? rowSplit : ACT_COUNT;
+
+        float total = 0.0f;
+        for (int i = first; i < last; i++) {
+            total += gfx::textWidth(ACT_LABEL[i], 1) + gap;
+        }
+        total -= gap;
+
+        float x = SCR_CX - total * 0.5f;
+        const float y = MENU_Y0 + row * MENU_PITCH;
+        for (int i = first; i < last; i++) {
+            xs[i] = x;
+            ys[i] = y;
+            ws[i] = (float)gfx::textWidth(ACT_LABEL[i], 1);
+            // Clean and medicine only mean something when there is something to do,
+            // but they stay listed so no word ever moves under the finger.
+            enabled[i] = (i == ACT_CLEAN) ? has(PF_POOP)
+                       : (i == ACT_MED)   ? has(PF_SICK)
+                       : true;
+            x += ws[i] + gap;
+        }
     }
     *count = ACT_COUNT;
 }
 
-void GamePet::drawIconRow()
+void GamePet::drawMenu()
 {
-    float xs[ACT_COUNT], ys[ACT_COUNT], half[ACT_COUNT];
+    float xs[ACT_COUNT], ys[ACT_COUNT], ws[ACT_COUNT];
     bool en[ACT_COUNT];
     int n = 0;
-    layoutIcons(xs, ys, half, en, &n);
+    layoutMenu(xs, ys, ws, en, &n);
 
     for (int i = 0; i < n; i++) {
-        const int cx = (int)lroundf(xs[i]);
-        const int cy = (int)lroundf(ys[i]);
-        const int h  = (int)half[i];
-
         if (i == lastTapped) {
-            // The original shows the selection by inverting the tile.
-            gfx::fillRect(cx - h, cy - h, 2 * h + 1, 2 * h + 1, LCD_INK);
-            ACT_GLYPH[i](cx, cy, LCD_BG);
-        } else {
-            ACT_GLYPH[i](cx, cy, en[i] ? LCD_INK : LCD_DIM);
+            gfx::fillRect((int)xs[i] - 4, (int)ys[i] - 3, (int)ws[i] + 8, 14,
+                          gfx::dim(COL_ACCENT, 0.65f));
         }
+        gfx::text(ACT_LABEL[i], (int)xs[i], (int)ys[i],
+                  en[i] ? (i == lastTapped ? COL_TEXT : COL_ACCENT) : COL_DIM, 1);
     }
 }
 
@@ -608,7 +650,7 @@ void GamePet::enter()
 void GamePet::leave()
 {
     save();   // never lose progress just because the user wandered off
-    gfx::clear(LCD_BG);
+    gfx::clear(COL_BG);
 }
 
 void GamePet::update(float dt)
@@ -633,15 +675,16 @@ void GamePet::update(float dt)
     // --- touch ---------------------------------------------------------------
     lastTapped = -1;
     if (input::tapped()) {
-        float xs[ACT_COUNT], ys[ACT_COUNT], half[ACT_COUNT];
+        float xs[ACT_COUNT], ys[ACT_COUNT], ws[ACT_COUNT];
         bool en[ACT_COUNT];
         int n = 0;
-        layoutIcons(xs, ys, half, en, &n);
+        layoutMenu(xs, ys, ws, en, &n);
         for (int i = 0; i < n; i++) {
-            const float dx = input::tapX() - xs[i];
-            const float dy = input::tapY() - ys[i];
-            const float hit = half[i] + 6.0f;  // a little forgiveness for fingers
-            if (fabsf(dx) <= hit && fabsf(dy) <= hit) {
+            // Generous vertically and a few pixels wide, because these are words
+            // rather than tiles and a finger is not a pointer.
+            const float dx = input::tapX() - (xs[i] + ws[i] * 0.5f);
+            const float dy = input::tapY() - (ys[i] + 3);
+            if (fabsf(dx) <= ws[i] * 0.5f + 6.0f && fabsf(dy) <= 12.0f) {
                 if (en[i]) {
                     act(i);
                     lastTapped = i;
@@ -663,43 +706,42 @@ void GamePet::update(float dt)
 
 void GamePet::render()
 {
-    // The whole panel is the LCD, not a dark app background -- that single change is
-    // most of why this now reads as a virtual pet.
-    gfx::clear(LCD_BG);
+    gfx::clear(COL_BG);
 
     if (has(PF_RUNAWAY)) {
-        gfx::strokeCircle(PET_CX, 168.0f, 96.0f, 2.0f, LCD_INK);
-        gfx::textCentered("CLAWD RAN AWAY", 130, LCD_INK, 2);
-        gfx::textCentered("it waited as long as it could", 162, LCD_INK, 1);
-        gfx::textCentered("TAP TO ADOPT A NEW PET", 200, LCD_INK, 1);
+        gfx::textCentered("CLAWD RAN AWAY", 130, COL_ACCENT, 2);
+        gfx::textCentered("it waited as long as it could", 162, COL_DIM, 1);
+        gfx::textCentered("TAP TO ADOPT A NEW PET", 200, COL_TEXT, 1);
         setDirty(0, SCR_H - 1);
         return;
     }
 
-    drawHeartMeters();
-
-    char head[32];
+    // Header: what it is, how old it is, on one line with the accent.
+    char head[40];
     const float m = ageMin();
-    snprintf(head, sizeof(head), "%s  %02d:%02d", STAGE_NAMES[S.stage],
+    snprintf(head, sizeof(head), "CLAWD PET  |  %s  |  %02d:%02d", STAGE_NAMES[S.stage],
              (int)(m / 60.0f) % 100, (int)m % 60);
-    gfx::textCentered(head, 84, LCD_INK, 1);
+    gfx::textCentered(head, HEAD_Y, COL_ACCENT, 1);
+    drawRule(RULE1_Y);
 
+    drawHeartMeters();
     drawPetSprite();
 
     // Status glyphs, kept clear of the sprite: at the adult scale the body reaches
     // about PET_CX +/- 60, so anything nearer the middle disappears into it.
+    // Status markers as words, for the same reason the menu is words.
     if (has(PF_POOP)) {
-        gfx::fillCircle(PET_CX + 84.0f, PET_CY + 32.0f, 5.0f, LCD_INK);
-        gfx::fillRect((int)PET_CX + 79, (int)PET_CY + 37, 11, 2, LCD_INK);
+        gfx::text("MESS", (int)PET_CX + 66, (int)PET_CY + 30, COL_ACCENT, 1);
     }
     if (has(PF_SICK)) {
-        glyph_cross((int)PET_CX - 84, (int)PET_CY + 32, LCD_INK);
+        gfx::text("SICK", (int)PET_CX - 96, (int)PET_CY + 30, COL_HEART_FULL, 1);
     }
 
     if (msg[0] && msgAgeMs < MSG_LINGER_MS) {
-        gfx::textCentered(msg, MSG_Y, LCD_INK, 1);
+        gfx::textCentered(msg, MSG_Y, COL_TEXT, 1);
     }
 
-    drawIconRow();
+    drawRule(RULE2_Y);
+    drawMenu();
     setDirty(0, SCR_H - 1);
 }

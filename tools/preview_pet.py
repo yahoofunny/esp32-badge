@@ -20,23 +20,29 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from previewlib import (SCR_W, SCR_H, CX, CY, load_font, load_pet_sprites,  # noqa: E402
-                        text_centered, text_width, visible_half_width,
+                        draw_text, text_centered, text_width, visible_half_width,
                         apply_bezel, finish)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # --- must match system/game_pet.cpp -----------------------------------------
-LCD_BG = (0xA8, 0xB4, 0x8C)
-LCD_INK = (0x1A, 0x1E, 0x14)
-LCD_DIM = (0x7E, 0x8A, 0x66)
+COL_BG = (0x0E, 0x0E, 0x16)
+COL_TEXT = (0xEC, 0xEC, 0xF4)
+COL_DIM = (0x6E, 0x6E, 0x80)
+COL_RULE = (0x2A, 0x2A, 0x3A)
+COL_HEART_FULL = (0xFF, 0x5A, 0x7A)
+COL_HEART_EMPTY = (0x33, 0x33, 0x42)
+COL_ACCENT = (0xD9, 0x77, 0x57)
 
-HEART_TOTAL, HEART_PITCH, HEART_Y = 4, 13, 52
-HEART_LEFT_X, HEART_RIGHT_X = 62, 259
+HEAD_Y, RULE1_Y, RULE2_Y = 44, 60, 272
+RULE_X0, RULE_X1 = 62, 298
+HEART_TOTAL, HEART_PITCH = 4, 13
+METER_LABEL_RIGHT, METER_HEART_X = 168, 180
+METER_Y0, METER_PITCH = 76, 18
 
-PET_CX, PET_CY = 180.0, 172.0
-MSG_Y = 266
-
-ICON_PITCH, ICON_Y, ICON_HALF = 33, 300, 13
+PET_CX, PET_CY = 180.0, 176.0
+MSG_Y = 250
+MENU_Y0, MENU_PITCH = 288, 18
 
 STAGE_NAMES = ["EGG", "BABY", "TEEN", "ADULT"]
 SPRITE_NAME = ["egg", "baby", "teen", "adult"]
@@ -106,15 +112,19 @@ def stage_scale(stage):
     return 6 if stage >= 3 else (5 if stage == 2 else 4)
 
 
+def dim(c, k):
+    return tuple(int(v * (1 - k)) for v in c)
+
+
 def draw_heart(px, cx, cy, filled):
-    c = LCD_INK if filled else LCD_DIM
+    c = COL_HEART_FULL if filled else COL_HEART_EMPTY
     disc(px, cx - 2, cy - 1, 2.2, c)
     disc(px, cx + 2, cy - 1, 2.2, c)
     for i in range(5):
         rect(px, cx - 3 + i, cy + 1 + i, 7 - 2 * i, 1, c)
 
 
-def draw_pet(px, sprite, scale):
+def draw_pet(px, sprite, scale, pet_rgb):
     w, h, rb, data = sprite
     bo = int(round(scale))
     ox, oy = PET_CX - w * scale / 2, PET_CY - h * scale / 2
@@ -123,8 +133,7 @@ def draw_pet(px, sprite, scale):
             idx = (data[y * rb + (x >> 1)] >> ((x & 1) * 4)) & 0x0F
             if not idx:
                 continue
-            rect(px, ox + x * scale, oy + y * scale, bo, bo,
-                 LCD_INK if idx == 1 else LCD_BG)
+            rect(px, ox + x * scale, oy + y * scale, bo, bo, pet_rgb[idx])
 
 
 def main() -> int:
@@ -143,40 +152,50 @@ def main() -> int:
     args = ap.parse_args()
 
     font = load_font(os.path.join(ROOT, "system", "assets_font.h"))
-    _, sprites = load_pet_sprites(os.path.join(ROOT, "system", "assets_pet.h"))
+    pal, sprites = load_pet_sprites(os.path.join(ROOT, "system", "assets_pet.h"))
+    pet_rgb = [tuple(int(v * 255 // 255) for v in c) for c in pal]
 
-    img = Image.new("RGB", (SCR_W, SCR_H), LCD_BG)
+    img = Image.new("RGB", (SCR_W, SCR_H), COL_BG)
     px = img.load()
+
+    head = f"CLAWD PET  |  {STAGE_NAMES[args.stage]}  |  {args.age}"
+    text_centered(px, font, head, HEAD_Y, COL_ACCENT, 1)
+    rect(px, RULE_X0, RULE1_Y, RULE_X1 - RULE_X0, 1, COL_RULE)
 
     hh = int(round((100 - args.hunger) / (100 / HEART_TOTAL)))
     fh = int(round((100 - args.fun) / (100 / HEART_TOTAL)))
-    for i in range(HEART_TOTAL):
-        draw_heart(px, HEART_LEFT_X + i * HEART_PITCH, HEART_Y, i < hh)
-        draw_heart(px, HEART_RIGHT_X + i * HEART_PITCH, HEART_Y, i < fh)
-
-    head = f"{STAGE_NAMES[args.stage]}  {args.age}"
-    text_centered(px, font, head, 84, LCD_INK, 1)
+    for i, (name, val) in enumerate((("HUNGER", hh), ("HAPPY", fh))):
+        y = METER_Y0 + i * METER_PITCH
+        draw_text(px, font, name, METER_LABEL_RIGHT - text_width(font, name, 1), y, COL_DIM, 1)
+        for k in range(HEART_TOTAL):
+            draw_heart(px, METER_HEART_X + k * HEART_PITCH, y + 3, k < val)
 
     name = SPRITE_SLEEP[args.stage] if (args.asleep and args.stage != 0) else SPRITE_NAME[args.stage]
-    draw_pet(px, sprites[name], stage_scale(args.stage))
+    draw_pet(px, sprites[name], stage_scale(args.stage), pet_rgb)
 
     if args.poop:
-        disc(px, PET_CX + 84, PET_CY + 32, 5, LCD_INK)
-        rect(px, PET_CX + 79, PET_CY + 37, 11, 2, LCD_INK)
+        draw_text(px, font, "MESS", int(PET_CX) + 66, int(PET_CY) + 30, COL_ACCENT, 1)
     if args.sick:
-        g_cross(px, PET_CX - 84, PET_CY + 32, LCD_INK)
+        draw_text(px, font, "SICK", int(PET_CX) - 96, int(PET_CY) + 30, COL_HEART_FULL, 1)
 
-    text_centered(px, font, "clawd played until it puffed", MSG_Y, LCD_INK, 1)
+    text_centered(px, font, "clawd played until it puffed", MSG_Y, COL_TEXT, 1)
 
-    x0 = CX - (len(GLYPHS) - 1) * ICON_PITCH / 2
-    for i, fn in enumerate(GLYPHS):
-        cx = x0 + i * ICON_PITCH
-        if i == args.selected:
-            rect(px, cx - ICON_HALF, ICON_Y - ICON_HALF,
-                 2 * ICON_HALF + 1, 2 * ICON_HALF + 1, LCD_INK)
-            fn(px, cx, ICON_Y, LCD_BG)
-        else:
-            fn(px, cx, ICON_Y, LCD_INK)
+    rect(px, RULE_X0, RULE2_Y, RULE_X1 - RULE_X0, 1, COL_RULE)
+
+    # two rows of words, four then three
+    gap = 14.0
+    for row, (first, last) in enumerate(((0, 4), (4, 7))):
+        total = sum(text_width(font, GLYPH_NAMES[i].upper(), 1) + gap for i in range(first, last)) - gap
+        x = CX - total / 2
+        y = MENU_Y0 + row * MENU_PITCH
+        for i in range(first, last):
+            lab = GLYPH_NAMES[i].upper()
+            w = text_width(font, lab, 1)
+            if i == args.selected:
+                rect(px, x - 4, y - 3, w + 8, 14, dim(COL_ACCENT, 0.65))
+            draw_text(px, font, lab, int(x), y,
+                      COL_TEXT if i == args.selected else COL_ACCENT, 1)
+            x += w + gap
 
     apply_bezel(img)
     finish(img, args.out, args.scale)
@@ -189,13 +208,18 @@ def main() -> int:
         print(f"  {label:22s} needs {half:6.1f}  visible {hw:6.1f}  -> "
               f"{'fits' if half <= hw - 2 else 'CLIPPED'}")
 
-    check("heart meters", HEART_Y + 6,
-          max(CX - HEART_LEFT_X, HEART_RIGHT_X + 3 * HEART_PITCH - CX))
-    check("age line", 84 + 7, text_width(font, head, 1) / 2)
-    check("message line", MSG_Y + 7, text_width(font, "clawd played until it puffed", 1) / 2)
-    check("icon row", ICON_Y + ICON_HALF, abs(x0 - CX) + ICON_HALF)
+    check("header line", HEAD_Y + 7, text_width(font, head, 1) / 2)
+    check("rule 1", RULE1_Y + 1, max(abs(RULE_X0 - CX), abs(RULE_X1 - CX)))
+    check("meter row (HUNGER)", METER_Y0 + 10,
+          max(CX - (METER_LABEL_RIGHT - text_width(font, "HUNGER", 1)),
+              METER_HEART_X + 3 * HEART_PITCH - CX))
     check("pet sprite", int(PET_CY + SPRITE_W[SPRITE_NAME[args.stage]] * stage_scale(args.stage) / 2),
           SPRITE_W[SPRITE_NAME[args.stage]] * stage_scale(args.stage) / 2)
+    check("message line", MSG_Y + 7, text_width(font, "clawd played until it puffed", 1) / 2)
+    check("rule 2", RULE2_Y + 1, max(abs(RULE_X0 - CX), abs(RULE_X1 - CX)))
+    for row, (first, last) in enumerate(((0, 4), (4, 7))):
+        total = sum(text_width(font, GLYPH_NAMES[i].upper(), 1) + gap for i in range(first, last)) - gap
+        check(f"menu row {row + 1}", MENU_Y0 + row * MENU_PITCH + 7, total / 2)
     return 0
 
 

@@ -104,9 +104,10 @@ private:
     void drawHeart(int cx, int cy, bool filled);
     void drawHearts(int x, int y, int filled, int total);
     void drawHeartMeters();
+    void drawRule(int y);
     void drawPetSprite();
-    void drawIconRow();
-    void layoutIcons(float *xs, float *ys, float *halfSizes, bool *enabled, int *count) const;
+    void drawMenu();
+    void layoutMenu(float *xs, float *ys, float *ws, bool *enabled, int *count) const;
     int  stageScale() const;
 
     char     msg[40] = {0};
