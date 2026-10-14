@@ -227,6 +227,25 @@ static void drawImpact()
 }
 
 // =================================================================== IMU ======
+// Opening emblem: clawd parked in the middle of the arena, held for a beat before
+// the game starts. It reuses the backdrop and the sprite already in memory, so this
+// costs no extra flash -- the stand-alone icon in the repo is for presentation, this
+// is the same composition drawn live.
+static void showEmblem()
+{
+  const float savedX = bx, savedY = by;
+
+  bx = CX;
+  by = CY;
+  memcpy(fb, bg, (size_t)SCR_W * SCR_H * 2);
+  drawClawd(cosf(-0.28f), sinf(-0.28f));   // a fixed mid-roll tilt
+  LCD_pushFull(fb);
+  LCD_waitTrans();
+  delay(1500);
+
+  bx = savedX;
+  by = savedY;
+}
 static void readAccel(float *out)
 {
   if (!imuOk) { out[0] = out[1] = out[2] = 0.0f; return; }
@@ -335,9 +354,9 @@ void setup()
 
   Backlight_Init();
   LCD_Init();
-  LCD_pushFull(bg);
-  LCD_waitTrans();
-  Set_Backlight(85);
+  Set_Backlight(85);          // on before the emblem, or the opening beat is invisible
+
+  showEmblem();
 
   imuOk = imu.begin(Wire, QMI8658_L_SLAVE_ADDRESS);
   if (imuOk) {

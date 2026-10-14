@@ -106,6 +106,77 @@ Board options are baked into `build.sh`. The non-default ones matter:
 | `FlashMode` | `qio` | QIO 80MHz |
 | `PartitionScheme` | `app3M_fat9M_16MB` | 3MB app + 9.9MB FATFS for assets |
 
+## Games
+
+### clawd-roll
+
+<img src="games/clawd-roll/icon.png" width="180" alt="clawd-roll icon">
+
+Tilt the board and clawd rolls; let up and it coasts; hit the arena wall and it
+bounces. No score, no goal — it is a thing that feels good to wobble.
+
+```
+games/clawd-roll/
+├── clawd-roll.ino        the game: physics, tilt input, direct framebuffer rendering
+├── clawd-source.png      source art (flat orange mascot, transparent background)
+├── clawd_asset.h         generated: 2bpp indexed sprite, 378x253 in 23 KB
+├── icon.png / icon-256.png
+├── partitions.csv        must match the stock layout — see Coexistence below
+└── Display_ST77916.*, esp_lcd_st77916.*, I2C_Driver.*, Touch_CST816.*
+                          board driver copies (see the note in Display_ST77916.cpp)
+```
+
+```bash
+./tools/deploy_game.sh                 # compile, flash into ota_0, boot it
+python tools/make_icon.py              # regenerate the icon
+python tools/convert_sprite.py games/clawd-roll/clawd-source.png \
+       games/clawd-roll/clawd_asset.h --name clawd --body E83B3B
+```
+
+Rendering bypasses LVGL completely: the sketch owns a 360×360 RGB565 framebuffer in
+PSRAM and draws into it directly, which keeps the frame loop cheap and sidesteps the
+LVGL 8.x/9.x split between the two example trees.
+
+**Tilt input.** The axis perpendicular to the screen is found at boot (it is the one
+carrying gravity while the board lies flat), so only the in-plane mapping is
+hard-coded. There is deliberately *no* zeroing calibration: with gravity-sensed tilt,
+level *is* zero, and subtracting a boot-time snapshot only bakes in whatever angle
+the board happened to be held at. Instead a slow auto-trim removes the
+accelerometer's static offset, but only while the board is near level — lean into a
+tilt and the trim gate closes so it never fights the player.
+
+## Coexistence: the game and the stock system
+
+The two firmwares live in different partition slots and neither is overwritten:
+
+```
+factory  app  0x020000  6.88MB   the stock Waveshare system, including the XiaoZhi AI app
+ota_0    app  0x6c0000  4MB      the game
+assets   data 0xac0000  4MB      stock media partition, untouched
+```
+
+Switching rewrites only the 8 KB `otadata` selector, so it takes about a second
+rather than the ~70 s a full reflash costs:
+
+```bash
+python tools/switch_slot.py game     # boot the game
+python tools/switch_slot.py stock    # boot the stock system
+python tools/switch_slot.py status   # report what is currently selected
+```
+
+Inside the game, a long press of the BOOT button also returns to the stock system.
+
+This works because `games/clawd-roll/partitions.csv` is byte-identical to the table
+already on the device — the offsets were read back from the stock bootloader's own
+log, and the build output is parsed to confirm it before anything is flashed. A
+mismatch would send runtime partition lookups to the wrong regions.
+
+The `otadata` entry format has three traps worth knowing if you touch the code:
+the checksum covers **only the 4-byte `ota_seq`**, not the whole struct; ESP-IDF's
+`esp_rom_crc32_le` inverts both its input and its output (it is *not* zlib's crc32);
+and `ota_state` must be `VALID`, because anything the bootloader finds in
+`PENDING_VERIFY` or `NEW` is treated as unconfirmed and rolled back.
+
 ## Back up before you flash
 
 Dump the whole flash first — it is the only way back to a byte-exact stock state:
