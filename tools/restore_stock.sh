@@ -73,7 +73,12 @@ sleep 5
 # SPI mode). The stock bootloader is built for DIO; forcing QIO there leaves it
 # unable to read flash and the board watchdog-resets in a loop.
 # --verify reads the written regions back and compares.
-"$ESPTOOL" --chip esp32s3 --port "$PORT" --baud 921600 \
+#
+# --after watchdog_reset, not esptool's default RTS reset: on this board the
+# USB-Serial/JTAG peripheral treats an RTS-driven reset as a request to re-enter
+# download mode, and a board left in the ROM loader looks dead (black screen) while
+# still enumerating over USB. The watchdog path boots the application properly.
+"$ESPTOOL" --chip esp32s3 --port "$PORT" --baud 921600 --after watchdog_reset \
     write_flash --flash_mode keep --flash_size keep --flash_freq keep --verify \
     0x0 "$IMAGE"
 

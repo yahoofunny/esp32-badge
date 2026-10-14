@@ -149,13 +149,19 @@ def main() -> int:
           hex(NEW_FACTORY_OFFSET), APP], True),
         (["write_flash", "--flash_mode", "keep", "--flash_size", "keep", "--flash_freq", "keep",
           hex(NEW_OTA0_OFFSET), stock_tmp], True),
-        (["erase_region", hex(OTA_DATA_OFFSET), hex(OTA_DATA_SIZE)], False),
+        # MUST reset. With reset=False the chip is left sitting in the ROM download
+        # loader: the screen stays black and the board looks dead, but USB still
+        # enumerates and every subsequent esptool call (which resets on connect) sees
+        # a perfectly healthy boot -- so the fault is invisible from the host side.
+        # On this board a power cycle is not an escape either, because USB keeps the
+        # board powered and the PWR button cannot cut it.
+        (["erase_region", hex(OTA_DATA_OFFSET), hex(OTA_DATA_SIZE)], True),
     ]
 
     for i, (args_, reset) in enumerate(steps, 1):
         print(f"--- step {i}/{len(steps)} ---")
-        # Only the last step may leave the ROM; the others keep it in the loader so
-        # the sequence is not interrupted by an app that is not fully written yet.
+        # Earlier steps intentionally keep the chip in the loader so nothing starts
+        # running an app that is only half written; the final step must not.
         rc = esptool(tool, args.port, args_, reset=reset)
         if rc:
             print(f"step {i} failed with {rc}", file=sys.stderr)

@@ -413,3 +413,11 @@ header. Details in [docs/hardware.md](docs/hardware.md).
 - [Waveshare repo](https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.85B)
 - [esp-brookesia](https://github.com/espressif/esp-brookesia) — the HMI framework the stock system is built on
 - [LVGL](https://lvgl.io)
+
+**Anything that talks to the serial port must finish by booting the app.** On this
+board a chip left in the ROM download loader looks completely dead — black screen, no
+response to the power button — while still enumerating over USB, and a power cycle is
+not an escape because USB keeps it powered. Worse, it is invisible from the host side:
+every subsequent `esptool` call resets on connect and sees a perfectly healthy boot,
+so the tooling keeps reporting success while the screen stays dark. Always end with
+`--after watchdog_reset`, never leave a `--after no_reset` step as the final one.
