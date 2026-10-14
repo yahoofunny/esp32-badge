@@ -39,6 +39,16 @@ private:
         uint8_t  flags;             // bitfield, see PF_*
         uint32_t hungerPeakSec;     // when hunger last hit 100, 0 if it has not
         uint32_t criticalSinceSec;  // when the multi-need critical state began
+
+        // Time the pet spent off-screen is accounted for, so being away does not
+        // freeze it -- the point of a virtual pet is that it keeps living while you
+        // do something else.
+        //
+        // millis() restarts at zero on every power-on, so a saved timestamp is only
+        // meaningful within the same boot. sessionId identifies the boot, and the
+        // away time is only applied when it still matches.
+        uint32_t sessionId;
+        uint32_t lastSeenMs;
     };
 
     enum {

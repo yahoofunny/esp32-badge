@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include "esp_random.h"
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -36,6 +37,15 @@ static const uint32_t RUNAWAY_CRIT_SEC   = 60UL * 60;
 static const float POOP_CHANCE_PER_MIN = 0.05f;
 
 static const uint32_t SAVE_PERIOD_MS = 15000;
+
+// Upper bound on the decay applied for time spent off-screen. The original allows 48
+// hours because its clock runs while the browser is closed; ours only runs while the
+// badge is powered, and you are usually holding it, so a smaller cap keeps an
+// overnight stay in the launcher from being a death sentence.
+static const uint32_t AWAY_CAP_SEC = 4UL * 3600;
+
+// Identifies this power-on. Regenerated lazily so it is stable for the whole session.
+static uint32_t petSessionId = 0;
 static const uint32_t MSG_LINGER_MS  = 6000;
 
 static const char *NVS_NAMESPACE = "clawdpet";
@@ -181,6 +191,8 @@ void GamePet::save()
 void GamePet::resetToNewEgg()
 {
     memset(&S, 0, sizeof(S));
+    S.sessionId  = petSessionId;
+    S.lastSeenMs = millis();
     S.hunger = 35.0f;
     S.fun    = 40.0f;
     S.clean  = 75.0f;
@@ -498,7 +510,28 @@ void GamePet::drawButtons()
 // -------------------------------------------------------------------- frame ---
 void GamePet::enter()
 {
+    if (!petSessionId) petSessionId = (uint32_t)esp_random();
+
+    // Work out how long the pet was off-screen *before* load() overwrites the
+    // saved clock. Only valid within the same boot; after a power cycle millis()
+    // has restarted and the gap is unknowable, so the pet simply waits.
+    const uint32_t nowMs = millis();
+    uint32_t awaySec = 0;
+
     load();
+
+    if (S.sessionId == petSessionId && nowMs > S.lastSeenMs) {
+        const uint32_t awayMs = nowMs - S.lastSeenMs;
+        awaySec = awayMs / 1000;
+        if (awaySec > AWAY_CAP_SEC) awaySec = AWAY_CAP_SEC;
+    }
+    if (awaySec > 0) {
+        Serial.printf("[pet] %u s passed off-screen; applying\n", (unsigned)awaySec);
+        tick(awaySec);          // ages it too, so a hatch can happen while away
+        save();
+    }
+    S.sessionId  = petSessionId;
+    S.lastSeenMs = nowMs;
     bobPhase = 0.0f;
     saveCounter = 0.0f;
     tickAccum = 0.0f;
@@ -516,6 +549,7 @@ void GamePet::leave()
 void GamePet::update(float dt)
 {
     const uint32_t ms = (uint32_t)(dt * 1000.0f + 0.5f);
+    S.lastSeenMs = millis();     // so time spent off-screen can be measured later
 
     // Advance the simulation in whole seconds. Taking dt/1000 directly would round
     // every 16 ms frame down to zero and the pet would never age.
