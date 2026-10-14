@@ -45,12 +45,25 @@ static Game *const *g_games = nullptr;
 static int   g_count = 0;
 
 static float selPos  = 0.0f;    // animated carousel position, in index units
+// The selection is a running step count, deliberately NOT kept modulo the number of
+// entries. Wrapping it here is what made the carousel animate backwards: stepping
+// forward from the last entry to the first changed the target from n-1 to 0, so the
+// easing difference went from +1 to -(n-1) and the ring span the long way round.
+// Keeping it unbounded means selPos always travels in the direction of travel, and
+// the modulo is applied only where an actual array index is needed.
 static int   sel      = 0;
 static bool  armed    = true;
 static float leanHeld = 0.0f;   // seconds the current lean has been sustained
 static float age      = 0.0f;   // seconds since the launcher appeared
 static int   launching = -1;
 static float launchT   = 0.0f;
+
+// The step count is unbounded; this is where it becomes an array index.
+static inline int selIndex()
+{
+    const int m = sel % g_count;
+    return m < 0 ? m + g_count : m;
+}
 
 static float iconAngle(int i)
 {
@@ -89,7 +102,7 @@ void begin(Game *const *games, int count)
 
 static void step(int dir)
 {
-    sel = (sel + dir + g_count) % g_count;
+    sel += dir;   // unbounded on purpose -- see the note on `sel`
 }
 
 Game *update(float dt)
@@ -127,7 +140,9 @@ Game *update(float dt)
                 const float half = 0.5f * (ICON_MIN + (ICON_MAX - ICON_MIN) * frontness(iy)) + 8.0f;
                 const float dx = txp - ix, dy = typ - iy;
                 if (dx * dx + dy * dy <= half * half) {
-                    sel = i;
+                    // Re-base rather than assign, so the carousel eases to the
+                    // tapped entry by the shortest route instead of unwinding.
+                    sel += i - selIndex();
                     launching = i;
                     launchT = 0.0f;
                     return nullptr;
@@ -137,7 +152,7 @@ Game *update(float dt)
             // can be driven purely by tilt and then confirmed with one tap.
             const float cdx = txp - SCR_CX, cdy = typ - SCR_CY;
             if (cdx * cdx + cdy * cdy <= CENTER_R * CENTER_R) {
-                launching = sel;
+                launching = selIndex();
                 launchT = 0.0f;
                 return nullptr;
             }
@@ -202,7 +217,7 @@ static void drawIconAt(int i, float scaleBoost)
 
     g_games[i]->drawIcon(cx, cy, size * 0.56f);
 
-    if (i == sel && launching < 0) {
+    if (i == selIndex() && launching < 0) {
         // Breathing ring marks the selection without adding any text.
         const float pulse = 0.5f + 0.5f * sinf(age * 3.2f);
         gfx::strokeCircle(cx, cy, size * 0.5f + 3.0f + pulse * 1.5f, 2.0f,
@@ -239,7 +254,7 @@ void render()
 
     // Names: the selected entry under the ring, and a hint line at the very bottom.
     if (launching < 0) {
-        gfx::textCentered(g_games[sel]->name(), (int)(SCR_CY + ORBIT_Y) + 34, COL_LABEL, 2);
+        gfx::textCentered(g_games[selIndex()]->name(), (int)(SCR_CY + ORBIT_Y) + 34, COL_LABEL, 2);
         gfx::textCentered(g_count > 1 ? "tilt to browse  -  tap to play"
                                       : "tap to play",
                           SCR_H - 22, COL_HINT, 1);
