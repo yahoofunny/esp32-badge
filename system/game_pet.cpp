@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include <time.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -52,7 +53,9 @@ static const uint32_t THOUGHT_EVERY_MS = 40000;
 static const uint32_t AWAY_CAP_SEC     = 4UL * 3600;
 
 static const char *const NVS_NAMESPACE = "clawdpet";
-static const uint32_t SAVE_MAGIC = 0x50544543;   // 'CETP'
+static const uint32_t SAVE_MAGIC = 0x50544544;   // 'DETP': the save gained the RTC
+                                                 // timestamp, and an older blob
+                                                 // would be read at the wrong size
 
 static uint32_t petSessionId = 0;
 
@@ -795,7 +798,11 @@ void GamePet::enter()
     load();
 
     uint32_t awaySec = 0;
-    if (S.sessionId == petSessionId && nowMs > S.lastSeenMs) {
+    if (sysclock::valid() && S.lastSeenEpoch > 1700000000u) {
+        // The real clock, so the gap survives a power cycle and is exact.
+        const uint32_t nowEpoch = (uint32_t)time(nullptr);
+        if (nowEpoch > S.lastSeenEpoch) awaySec = nowEpoch - S.lastSeenEpoch;
+    } else if (S.sessionId == petSessionId && nowMs > S.lastSeenMs) {
         awaySec = (nowMs - S.lastSeenMs) / 1000;
         if (awaySec > AWAY_CAP_SEC) awaySec = AWAY_CAP_SEC;
     }
@@ -806,6 +813,7 @@ void GamePet::enter()
     }
     S.sessionId = petSessionId;
     S.lastSeenMs = nowMs;
+    S.lastSeenEpoch = sysclock::valid() ? (uint32_t)time(nullptr) : 0;
 
     anim = has(PF_ASLEEP) ? ANIM_SLEEP : (has(PF_SICK) ? ANIM_SICK : ANIM_IDLE);
     animFrame = 0;
@@ -829,6 +837,7 @@ void GamePet::update(float dt)
 {
     const uint32_t ms = (uint32_t)(dt * 1000.0f + 0.5f);
     S.lastSeenMs = millis();
+    if (sysclock::valid()) S.lastSeenEpoch = (uint32_t)time(nullptr);
 
     // Advance the simulation in whole seconds: taking dt directly would round every
     // 16 ms frame down to zero and the pet would never age.

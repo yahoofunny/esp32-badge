@@ -42,12 +42,15 @@ public:
 
 private:
     struct State {
-        // Time the pet spent off-screen is accounted for, so being away does not
-        // freeze it. millis() restarts at zero each power-on, so a stored timestamp is
-        // only meaningful within one boot; sessionId identifies the boot and the gap
-        // is applied only while it still matches.
+        // Time the pet spent off-screen is accounted for, so being away does not freeze
+        // it -- and with the RTC there is a real wall clock to measure it against, which
+        // is the whole difference between a pet that grows and one that is a baby
+        // forever: millis() restarts at zero on every power-on, so the gap across a power
+        // cycle used to be unknowable and was simply lost. lastSeenMs and sessionId are
+        // still kept for the case where the clock has never been set.
         uint32_t ageSec;
-        uint32_t lastSeenMs;
+        uint32_t lastSeenEpoch;   // unix seconds, from the RTC
+        uint32_t lastSeenMs;      // the same-boot fallback
         uint32_t sessionId;
 
         float    hunger;        // all four are 0..100, higher is better
