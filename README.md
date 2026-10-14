@@ -166,6 +166,34 @@ python tools/switch_slot.py status   # report what is currently selected
 
 Inside the game, a long press of the BOOT button also returns to the stock system.
 
+**The selection is sticky.** Whichever slot `otadata` names is what a power cycle
+boots, so the game ships as the default: switch on and clawd appears. Pressing BOOT
+inside the game (or running `switch_slot.py stock`) hands over to the stock system,
+and the stock firmware then keeps the boot target pinned at `factory` from then on —
+so getting back to the game means running `switch_slot.py game` from a computer.
+There is no on-device way to return, because the stock system's UI cannot be
+extended (see below).
+
+### Why the game is not an entry in the stock system's launcher
+
+It would be the natural place for it, but it is not possible with what Waveshare
+ships:
+
+- The stock system is a **prebuilt binary**. Nothing in the published repository is
+  its source: `05_esp-brookesia` builds the same ESP-Brookesia *framework* with the
+  same stylesheet, but installs only the `SquarelineDemo` app, and the
+  `brookesia_core` component contains framework code only — no settings, weather,
+  music, video or game apps at all.
+- The `assets` partition is a packed resource table, not an app filesystem. Reading
+  it back off the device shows fonts, `srmodels.bin` (speech models) and an
+  `index.json` — there is no runtime app loading and no app store in this build.
+
+Upstream ESP-Brookesia does have a runtime-app mechanism (`runtime/brookesia_runtime_js`,
+`_lua`, `_wasm`, `_elf`, plus `app/brookesia_app_store`), so a system built from
+source *could* list the game in a launcher. That is the path to take if a launcher is
+wanted — but it means building our own system, which would not contain the stock
+apps such as XiaoZhi.
+
 This works because `games/clawd-roll/partitions.csv` is byte-identical to the table
 already on the device — the offsets were read back from the stock bootloader's own
 log, and the build output is parsed to confirm it before anything is flashed. A
