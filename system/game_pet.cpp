@@ -149,13 +149,16 @@ void GamePet::load()
 {
     Preferences prefs;
     if (prefs.begin(NVS_NAMESPACE, true)) {
-        uint32_t magic = 0;
-        size_t got = 0;
-        if (prefs.isKey("blob")) {
-            got = prefs.getBytes("blob", &magic, sizeof(magic));
-        }
-        if (got == sizeof(magic) && magic == SAVE_MAGIC) {
-            prefs.getBytes("blob", &S, sizeof(S));
+        // The magic has to travel inside the same blob as the state. Writing it as a
+        // separate putBytes first does not work: the second write replaces the value
+        // rather than appending to it, so the tag is gone by the time it is read back
+        // and every load looks like "no save found".
+        PetSave blob;
+        const size_t got = prefs.isKey("blob")
+                               ? prefs.getBytes("blob", &blob, sizeof(blob))
+                               : 0;
+        if (got == sizeof(blob) && blob.magic == SAVE_MAGIC) {
+            S = blob.state;
             prefs.end();
             // Sanity: a corrupt or half-written blob should not resurrect a pet with
             // nonsense needs.
@@ -182,9 +185,10 @@ void GamePet::save()
         Serial.println("[pet] could not open nvs for writing");
         return;
     }
-    uint32_t magic = SAVE_MAGIC;
-    prefs.putBytes("blob", &magic, sizeof(magic));
-    prefs.putBytes("blob", &S, sizeof(S));   // overwrites, magic included
+    PetSave blob;
+    blob.magic = SAVE_MAGIC;
+    blob.state = S;
+    prefs.putBytes("blob", &blob, sizeof(blob));
     prefs.end();
 }
 
@@ -204,6 +208,7 @@ void GamePet::resetToNewEgg()
     setFlag(PF_RUNAWAY, false);
     say("clawd laid an egg - %d min", (int)HATCH_MIN);
     save();
+    Serial.println("[pet] new egg laid (no valid save)");
 }
 
 // -------------------------------------------------------------- simulation ----
@@ -508,6 +513,36 @@ void GamePet::drawButtons()
 }
 
 // -------------------------------------------------------------------- frame ---
+bool GamePet::selfTest()
+{
+    // Load first. Running this before anything has been read means "the state to
+    // put back afterwards" is an empty struct, and the test would overwrite the
+    // real save with zeros on its way out.
+    load();
+    const State before = S;
+
+    State probe = S;
+    probe.stage  = 2;
+    probe.ageSec = 1234;
+    probe.hunger = 55.5f;
+
+    S = probe;
+    save();
+
+    // Wipe RAM so load() has to read the flash rather than find the values already
+    // sitting in the struct.
+    memset(&S, 0, sizeof(S));
+    load();
+
+    const bool ok = (S.stage == 2) && (S.ageSec == 1234) && (fabsf(S.hunger - 55.5f) < 0.01f);
+    Serial.printf("[pet] nvs round-trip: %s (stage=%u age=%u hunger=%.1f)\n",
+                  ok ? "PASS" : "FAIL", (unsigned)S.stage, (unsigned)S.ageSec, S.hunger);
+
+    S = before;      // leave the real pet as it was
+    save();
+    return ok;
+}
+
 void GamePet::enter()
 {
     if (!petSessionId) petSessionId = (uint32_t)esp_random();

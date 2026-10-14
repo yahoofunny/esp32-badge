@@ -20,6 +20,11 @@ public:
     uint16_t    accent() const override { return PX(RGB565(0xD7, 0x77, 0x57)); }
     void drawIcon(float cx, float cy, float size) const override;
 
+    // Exercises the save/load round-trip and reports the result. Navigation is the
+    // only other way to test persistence, and that takes playing for minutes to
+    // reach a state worth checking -- this checks the mechanism itself in one shot.
+    bool selfTest();
+
     void enter() override;
     void leave() override;
     void update(float dt) override;
@@ -56,6 +61,14 @@ private:
         PF_SLEEPING = 1 << 1,
         PF_SICK     = 1 << 2,
         PF_RUNAWAY  = 1 << 3,
+    };
+
+    // One NVS blob with the tag inside it. Writing the magic as a separate value
+    // first does not work: the following write replaces it rather than appending, so
+    // the tag is lost and every load looks like a fresh start.
+    struct PetSave {
+        uint32_t magic;
+        State    state;
     };
 
     State S;
