@@ -1,24 +1,28 @@
-# Partition table for the game firmware.
+# Partition table for the system firmware.
 #
-# This is deliberately identical to the table already on the device -- offsets and
-# sizes were read back from the stock bootloader's own log, not guessed:
+# The layout is arranged around one behaviour of the stock firmware: on every boot
+# it calls esp_ota_set_boot_partition(factory), and for a factory partition ESP-IDF
+# simply *erases otadata* (components/app_update/esp_ota_ops.c -- "if set boot
+# partition to factory bin, just format ota info partition"). With otadata erased
+# the bootloader falls back to factory.
 #
-#   0 nvs              WiFi data   01 02 00009000 00004000
-#   1 otadata          OTA data    01 00 0000d000 00002000
-#   2 phy_init         RF data     01 01 0000f000 00001000
-#   3 factory          factory app 00 00 00020000 00692000
-#   4 ota_0            OTA app     00 10 006c0000 00400000
-#   5 assets           Unknown data 01 82 00ac0000 00400000
+# So the stock firmware's own "always return to factory" habit becomes the way back:
 #
-# The build's compiled-in expectations must match what is actually in flash, or the
-# runtime partition lookups (NVS, assets, OTA) would read the wrong regions. Because
-# it matches, the game can be flashed into the idle `ota_0` slot and switched to by
-# rewriting otadata alone -- the stock system in `factory` is never touched.
+#   factory  <- our system      boots by default (otadata erased)
+#   ota_0    <- stock system    selected when our system writes a valid otadata
+#
+# Tapping XIAOZHI in the launcher writes otadata selecting ota_0 and restarts, which
+# lands in the stock system with the real XiaoZhi app. That system then immediately
+# pins the boot target back to factory, so the next power cycle returns here. Neither
+# direction needs a host computer.
+#
+# `assets` deliberately keeps the offset it had in the stock layout, so migrating
+# does not require copying those 4 MB anywhere.
 #
 # Name,   Type, SubType, Offset,   Size,     Flags
 nvs,      data, nvs,     0x9000,   0x4000,
 otadata,  data, ota,     0xd000,   0x2000,
 phy_init, data, phy,     0xf000,   0x1000,
-factory,  app,  factory, 0x20000,  0x692000,
-ota_0,    app,  ota_0,   0x6c0000, 0x400000,
+factory,  app,  factory, 0x20000,  0x100000,
+ota_0,    app,  ota_0,   0x120000, 0x9A0000,
 assets,   data, spiffs,  0xac0000, 0x400000,

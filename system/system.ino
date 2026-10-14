@@ -28,16 +28,22 @@
 #include "game.h"
 #include "game_clawd.h"
 #include "game_tap.h"
+#include "game_xiaozhi.h"
 #include "gfx.h"
 #include "input.h"
 #include "launcher.h"
 
 // ------------------------------------------------------------------- games ---
 // The whole registry. Order is the order they appear on the launcher ring.
-static GameClawd g_clawd;
-static GameTap   g_tap;
+//
+// Entries are "screens", not strictly games: GameXiaoZhi is an action that hands the
+// board over to the stock system. The launcher only needs each one to name itself,
+// draw an icon, and be enterable.
+static GameClawd   g_clawd;
+static GameTap     g_tap;
+static GameXiaoZhi g_xiaozhi;
 
-static Game *const GAMES[] = { &g_clawd, &g_tap };
+static Game *const GAMES[] = { &g_clawd, &g_tap, &g_xiaozhi };
 static const int   GAME_COUNT = (int)(sizeof(GAMES) / sizeof(GAMES[0]));
 
 // ----------------------------------------------------------------- screens ---
@@ -56,20 +62,10 @@ static const unsigned long HOLD_BACK_TO_STOCK    = 2200;
 
 static bool          bootFired = false;
 
-static void returnToStockSystem()
-{
-    const esp_partition_t *factory = esp_partition_find_first(
-        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_FACTORY, NULL);
-    if (!factory) {
-        Serial.println("[sys] no factory partition; staying put");
-        return;
-    }
-    Serial.println("[sys] handing over to the stock system");
-    esp_ota_set_boot_partition(factory);
-    delay(150);
-    esp_restart();
-}
-
+// The launcher's long press does the same thing as the XIAOZHI entry: it selects the
+// ota_0 slot and restarts. Note it does NOT set the boot target to `factory` -- in
+// this layout factory *is* this firmware, so that would be a no-op. See
+// partitions.csv for how the two slots hand the board back and forth.
 static void handleBootButton()
 {
     const unsigned long held = input::bootHeldMs();
@@ -91,7 +87,8 @@ static void handleBootButton()
             screen = SCREEN_LAUNCHER;
             Serial.println("[sys] back to the launcher");
         } else {
-            returnToStockSystem();
+            Serial.println("[sys] handing over to the stock system");
+            xiaozhi::switchToStockSystem();
         }
     }
 }

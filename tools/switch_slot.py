@@ -1,29 +1,36 @@
 #!/usr/bin/env python3
-"""Switch the board between the stock system and the game.
+"""Choose which firmware the bootloader starts.
 
-The factory partition holds Waveshare's stock system (which includes the XiaoZhi AI
-app) and `ota_0` holds the game. Both are already flashed and neither is touched by
-this script -- only the 8 KB `otadata` partition is rewritten, which is what the
-bootloader consults to decide what to run. Switching therefore takes about a second
-instead of the ~70 s a full reflash costs.
+Neither firmware is touched -- only the 8 KB `otadata` partition is rewritten, which
+is what the bootloader consults. Switching takes about a second instead of the ~70 s a
+full reflash costs.
 
-    stock  -> erase otadata. An invalid/erased otadata makes the bootloader fall
-              back to the `factory` partition.
-    game   -> write an `esp_ota_select_entry_t` selecting ota_0.
+    home   -> erase otadata. An invalid/erased otadata makes the bootloader fall back
+              to the `factory` partition, which holds our own system.
+    stock  -> write an `esp_ota_select_entry_t` selecting ota_0, which holds
+              Waveshare's stock system (and the XiaoZhi app).
+
+Note which slot means what. The two firmwares were deliberately swapped relative to
+the layout the board shipped with -- see tools/migrate_layout.py for why: it is what
+lets the stock system hand the board back by itself, with no host computer involved.
 
 The entry format is ESP-IDF's esp_ota_select_entry_t (32 bytes):
 
     uint32_t ota_seq;
     uint8_t  seq_label[20];
     uint32_t ota_state;
-    uint32_t crc;          // CRC32-LE over the first 28 bytes, init 0xFFFFFFFF, no final xor
+    uint32_t crc;
 
-which is exactly what esp_rom_crc32_le() computes. ota_state is set to
-ESP_OTA_IMG_VALID so the image is booted directly rather than being treated as
-pending-verify (which would need an app-side rollback confirmation).
+with three details that are easy to get wrong, all verified against the IDF sources:
+
+  * the checksum covers ONLY the 4-byte ota_seq, not the whole struct
+    (bootloader_common_ota_select_crc in bootloader_common_loader.c)
+  * esp_rom_crc32_le inverts its input and its output, so it is NOT zlib's crc32
+  * ota_state must be VALID; anything the bootloader finds in PENDING_VERIFY or NEW
+    is treated as unconfirmed and rolled back
 
 Usage:
-    tools/switch_slot.py game [port]
+    tools/switch_slot.py home [port]
     tools/switch_slot.py stock [port]
     tools/switch_slot.py status [port]      # report what is on the device now
 """
@@ -128,33 +135,35 @@ def run_esptool(esptool: str, port: str, args, reset: bool = True) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("slot", choices=["game", "stock", "status"])
+    ap.add_argument("slot", choices=["home", "stock", "status"])
     ap.add_argument("port", nargs="?", default=DEFAULT_PORT)
     args = ap.parse_args()
 
     esptool = find_esptool()
 
-    if args.slot == "stock":
-        print("Erasing otadata -> the bootloader will fall back to the factory partition")
-        print("(the stock system, including the XiaoZhi AI app)")
+    if args.slot == "home":
+        print("Erasing otadata -> the bootloader falls back to the factory partition,")
+        print("which holds our own system (launcher + games)")
         rc = run_esptool(esptool, args.port, ["erase_region", hex(OTA_DATA_OFFSET), hex(OTA_DATA_SIZE)])
         if rc:
             return rc
-        print("\nDone. The stock system should be booting now.")
+        print("\nDone. Our system should be booting now.")
 
-    elif args.slot == "game":
+    elif args.slot == "stock":
         image = otadata_image_for_game()
-        tmp = os.path.join(tempfile.gettempdir(), "otadata_game.bin")
+        tmp = os.path.join(tempfile.gettempdir(), "otadata_ota0.bin")
         with open(tmp, "wb") as fh:
             fh.write(image)
-        print(f"Writing otadata selecting ota_0 ({len(image)} bytes from {tmp})")
+        print(f"Writing otadata selecting ota_0 -> Waveshare's stock system "
+              f"({len(image)} bytes from {tmp})")
         rc = run_esptool(esptool, args.port,
                          ["write_flash", "--flash_mode", "keep", "--flash_size", "keep",
                           "--flash_freq", "keep", hex(OTA_DATA_OFFSET), tmp])
         if rc:
             return rc
-        print("\nDone. The game should be booting now.")
-        print("Long-press BOOT inside the game to come back to the stock system.")
+        print("\nDone. The stock system should be booting now.")
+        print("It pins the boot target back to factory on every boot, so a power cycle")
+        print("from there returns to our system with no host computer involved.")
 
     else:  # status
         tmp = os.path.join(tempfile.gettempdir(), "otadata_read.bin")
@@ -183,8 +192,8 @@ def main() -> int:
                 print(f"sector {idx}: seq={seq} state={label} crc={'ok' if crc_ok else 'BAD'}"
                       f"  -> {'VALID' if valid else 'ignored'}")
         print()
-        print("No valid entry -> bootloader falls back to the factory partition (stock system).")
-        print("A valid entry selecting ota_0 -> the game.")
+        print("No valid entry -> bootloader falls back to factory   = our system")
+        print("A valid entry selecting ota_0                        = the stock system")
 
     return 0
 

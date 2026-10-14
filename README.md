@@ -193,38 +193,62 @@ and vanishes. Tap it to score, three time-outs and it is over. It exists as much
 exercise the game interface as to be played — between it and clawd-roll both input
 paths and both ends of the drawing cost are covered.
 
-## Coexistence: the system and the stock system
+## Coexistence: our system and the stock system
 
-The two firmwares live in different partition slots and neither is overwritten:
+Both firmwares are flashed and neither is overwritten. Switching rewrites only the
+8 KB `otadata` selector, so it takes about a second rather than the ~70 s a full
+reflash costs:
 
 ```
-factory  app  0x020000  6.88MB   the stock Waveshare system, including the XiaoZhi AI app
-ota_0    app  0x6c0000  4MB      the game
-assets   data 0xac0000  4MB      stock media partition, untouched
+factory  app  0x020000  1.00MB   our system (launcher + games)
+ota_0    app  0x120000  9.62MB   the stock Waveshare system, including the XiaoZhi AI app
+assets   data 0xac0000  4.00MB   stock media partition, left where it was
 ```
 
-Switching rewrites only the 8 KB `otadata` selector, so it takes about a second
-rather than the ~70 s a full reflash costs:
+**The slots are the opposite way round from how the board shipped**, and that is the
+whole trick. `tools/migrate_layout.py` performs the swap; here is why it works.
+
+The stock firmware calls `esp_ota_set_boot_partition(factory)` on every boot, and for
+a factory partition ESP-IDF just *erases otadata*:
+
+```c
+// components/app_update/esp_ota_ops.c
+// if set boot partition to factory bin ,just format ota info partition
+if (partition->subtype == ESP_PARTITION_SUBTYPE_APP_FACTORY) {
+    return esp_partition_erase_range(find_partition, 0, find_partition->size);
+}
+```
+
+With the stock system in `factory` that behaviour was a trap: it pinned the boot
+target there, so leaving our system meant never getting back without a computer.
+Moving *our* firmware into `factory` turns the same behaviour into the way home.
+
+So the round trip needs no host at all:
+
+| | |
+|---|---|
+| launcher → tap **XIAOZHI** (or hold BOOT on the launcher) | writes otadata selecting ota_0, restarts → stock system |
+| power cycle in the stock system | it has already re-pinned the boot target to factory → back to our launcher |
+
+The launcher is what boots by default, because erased otadata falls back to `factory`.
 
 ```bash
-python tools/switch_slot.py game     # boot the game
-python tools/switch_slot.py stock    # boot the stock system
+python tools/switch_slot.py home     # boot our system (erases otadata)
+python tools/switch_slot.py stock    # boot the stock system (selects ota_0)
 python tools/switch_slot.py status   # report what is currently selected
+python tools/migrate_layout.py       # re-apply the layout swap; --dry-run to preview
 ```
 
-Inside the game, a long press of the BOOT button also returns to the stock system.
+`assets` deliberately keeps the offset the stock layout gave it, so the swap never has
+to copy those 4 MB. The bootloader is not rewritten either — it reads the table from
+flash at runtime.
 
-**The selection is sticky.** Whichever slot `otadata` names is what a power cycle
-boots, so the game ships as the default: switch on and clawd appears. Pressing BOOT
-inside the game (or running `switch_slot.py stock`) hands over to the stock system,
-and the stock firmware then keeps the boot target pinned at `factory` from then on —
-so getting back to the game means running `switch_slot.py game` from a computer.
-There is no on-device way to return, because the stock system's UI cannot be
-extended (see below).
+Reverting is `./tools/restore_stock.sh`, which writes the original 16 MB dump back
+verbatim and with it the original layout.
 
-### Why the game is not an entry in the stock system's launcher
+### Why the games are not entries in the stock system's launcher
 
-It would be the natural place for it, but it is not possible with what Waveshare
+That would be the natural place for them, and it is not possible with what Waveshare
 ships:
 
 - The stock system is a **prebuilt binary**. Nothing in the published repository is
