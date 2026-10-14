@@ -15,15 +15,21 @@
 #   ./tools/build.sh both    <sketch-dir> [port]
 #
 # Overridable environment variables:
-#   ARDUINO_CLI   path to arduino-cli     (default: tools/arduino-cli.exe, else $PATH)
-#   SKETCHBOOK    Arduino libraries dir   (default: read from arduino-cli config)
-#   PORT          serial port for upload  (default: COM3)
+#   ARDUINO_CLI       path to arduino-cli     (default: tools/arduino-cli.exe, else $PATH)
+#   SKETCHBOOK        Arduino libraries dir   (default: read from arduino-cli config)
+#   PORT              serial port for upload  (default: COM3)
+#   PARTITION_SCHEME  Arduino partition scheme (default: app3M_fat9M_16MB)
+#                     Use `custom` for sketches that ship a partitions.csv, e.g. the
+#                     game firmware, whose table must match the stock layout so it
+#                     can live in the idle ota_0 slot.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-FQBN="esp32:esp32:esp32s3:UploadSpeed=921600,USBMode=hwcdc,CDCOnBoot=cdc,MSCOnBoot=default,DFUOnBoot=default,UploadMode=default,CPUFreq=240,FlashMode=qio,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,DebugLevel=none,PSRAM=opi,LoopCore=1,EventsCore=1,EraseFlash=none,JTAGAdapter=default,ZigbeeMode=default"
+PARTITION_SCHEME="${PARTITION_SCHEME:-app3M_fat9M_16MB}"
+
+FQBN="esp32:esp32:esp32s3:UploadSpeed=921600,USBMode=hwcdc,CDCOnBoot=cdc,MSCOnBoot=default,DFUOnBoot=default,UploadMode=default,CPUFreq=240,FlashMode=qio,FlashSize=16M,PartitionScheme=${PARTITION_SCHEME},DebugLevel=none,PSRAM=opi,LoopCore=1,EventsCore=1,EraseFlash=none,JTAGAdapter=default,ZigbeeMode=default"
 
 # Locate arduino-cli: explicit override, then the copy shipped in tools/, then PATH.
 if [ -n "${ARDUINO_CLI:-}" ]; then
@@ -55,20 +61,32 @@ ACTION="$1"
 SKETCH="$2"
 [ $# -ge 3 ] && PORT="$3"
 
+# Keep build output inside the repo so the generated partition table and the app
+# .bin can be inspected before anything is flashed. --output-dir is deliberately
+# not used: pointing it at the build path makes arduino-cli try to copy each
+# artifact onto itself and fail.
+SKETCH_NAME="$(basename "$SKETCH")"
+BUILD_DIR="$ROOT/build/$SKETCH_NAME"
+
+COMPILE_ARGS=(--fqbn "$FQBN" --libraries "$SKETCHBOOK/libraries" --warnings none
+              --build-path "$BUILD_DIR")
+
 echo "arduino-cli : $CLI"
 echo "libraries   : $SKETCHBOOK/libraries"
+echo "partition   : $PARTITION_SCHEME"
+echo "build dir   : $BUILD_DIR"
 echo ""
 
 case "$ACTION" in
     compile)
-        "$CLI" compile --fqbn "$FQBN" --libraries "$SKETCHBOOK/libraries" --warnings none "$SKETCH"
+        "$CLI" compile "${COMPILE_ARGS[@]}" "$SKETCH"
         ;;
     upload)
-        "$CLI" upload -p "$PORT" --fqbn "$FQBN" "$SKETCH"
+        "$CLI" upload -p "$PORT" --fqbn "$FQBN" --input-dir "$BUILD_DIR" "$SKETCH"
         ;;
     both)
-        "$CLI" compile --fqbn "$FQBN" --libraries "$SKETCHBOOK/libraries" --warnings none "$SKETCH"
-        "$CLI" upload -p "$PORT" --fqbn "$FQBN" "$SKETCH"
+        "$CLI" compile "${COMPILE_ARGS[@]}" "$SKETCH"
+        "$CLI" upload -p "$PORT" --fqbn "$FQBN" --input-dir "$BUILD_DIR" "$SKETCH"
         ;;
     *)
         usage

@@ -27,3 +27,6 @@ Thumbs.db
 .DS_Store
 .vscode/
 .idea/
+
+# Scratch area: downloaded references, contact sheets, intermediate images
+/reference/
