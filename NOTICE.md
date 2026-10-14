@@ -14,6 +14,7 @@ pet, by way of the blog it was first copied into.
 | `games/clawd-roll/clawd-source.png` | the source art |
 | `games/clawd-roll/clawd_asset.h` | 2bpp indexed sprite generated from it |
 | `system/clawd-source.png` | the same source art, kept beside the firmware |
+| `system/assets_pet.h` | the same art at four sizes, the pet's body |
 | `games/clawd-roll/icon.png`, `icon-256.png` | the project icon, composed from it |
 
 This choice of licence is what made AGPL-3.0 the right one for the repository as a
@@ -43,8 +44,13 @@ The pet follows the model of
 [claude-code-tamagotchi](https://github.com/Ido-Levi/claude-code-tamagotchi) (MIT):
 four needs that all read "fuller is better", a derived health value, sickness that
 starts and ends on its own, and growth gated on accumulated care. That project's
-*design* was adopted; no code was copied from it, and its kaomoji artwork is not used
-— the face here is drawn procedurally with this project's own primitives.
+*design* was adopted; no code was copied from it, and its kaomoji artwork is not used.
+
+The pet's body is clawd instead, from the artwork listed above. `tools/make_pet_sprites.py`
+reduces it to one sprite per life stage, which is what makes growing up visible, and
+locates the eyes in the source so the firmware can draw its own over the top: the eyes
+are left out of the sprites and redrawn each frame, so a single body per stage carries
+every mood rather than needing a bitmap per emotion.
 
 ## The bitmap font
 

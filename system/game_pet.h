@@ -14,11 +14,11 @@
 //     as illness rather than as a fifth bar to keep topped up.
 //   * sickness that both starts and ends by itself, from health and cleanliness.
 //   * growth driven by accumulated care rather than by elapsed time alone.
-//   * the pet is a face that emotes, not a bitmap creature.
 //
-// One substitution: the original draws its face with kaomoji such as (◕ᴥ◕), and the
-// system font here is 8x8 ASCII only. The equivalent ASCII emoticons -- (^_^),
-// \(^o^)/ -- are what a terminal would have used anyway, and they render exactly.
+// One departure: the pet is not a face. It is clawd himself, drawn from the same
+// artwork the rolling game uses, with his eyes redrawn every frame so that one body
+// per life stage can carry every mood. See the body section of the implementation.
+//
 // Defined at file scope so the static tables in the implementation can size
 // themselves with them; private class enums are not visible there.
 enum PetAction { ACT_FEED, ACT_PLAY, ACT_PET, ACT_SLEEP, ACT_BATHE, ACT_NAME, ACT_COUNT };
@@ -100,12 +100,13 @@ private:
     float   accelMute = 0.0f;   // ignores the IMU briefly after a tap: touching the
                                 // panel spikes the accelerometer hard
 
-    // The face. An animation is a short loop of emoticon frames; an action switches to
-    // its own for a moment and the pet then drifts back to idle.
+    // The mood. An animation is a face and a movement; an action switches to its own
+    // for a moment and the pet then drifts back to idle.
     uint8_t anim      = ANIM_IDLE;
-    uint8_t animFrame = 0;
+    uint8_t animFrame = 0;         // counts frames within the mood; drives the blink
     float   animFrameSec = 0.0f;
     float   animHoldSec  = 0.0f;   // seconds left before reverting to idle
+    float   bobPhase     = 0.0f;   // free-running, so the bob does not tick with frames
 
     char  thought[42] = {0};
     float thoughtAgeSec = 0.0f;
@@ -133,7 +134,7 @@ private:
 
     // --- presentation -------------------------------------------------------
     void drawMeter(const char *label, float value, int x, int y);
-    void drawFace();
+    void drawPet();
     void drawDirt();
     void drawMenu();
     void layoutMenu(float *xs, float *ys, float *ws, bool *enabled, int *count) const;
@@ -145,5 +146,5 @@ private:
     void finishShakeGame(bool completed);
     void updateShakeGame(float dt);
     void renderShakeGame();
-    float petHitRadius() const;
+    bool petHit(int x, int y) const;
 };

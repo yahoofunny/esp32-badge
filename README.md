@@ -133,8 +133,10 @@ system/
 ├── game.h                the Game interface
 ├── game_clawd.{h,cpp}    tilt-controlled rolling clawd
 ├── game_tap.{h,cpp}      touch-controlled clawd tap
+├── game_pet.{h,cpp}      the tamagotchi: needs, growth, poking, the scrub game
 ├── clawd_sprite.h        the sprite + palette, shared by both games
 ├── assets_clawd.h        generated 2bpp sprite
+├── assets_pet.h          generated per-stage pet bodies
 ├── assets_font.h         generated 8x8 ASCII font
 └── partitions.csv        must match the stock layout — see Coexistence below
 ```
@@ -150,7 +152,11 @@ bottom corner fills while you hold, so the gesture is discoverable.
 ./tools/deploy_game.sh system          # compile, flash into ota_0, boot it
 ./tools/deploy_game.sh games/clawd-roll   # or deploy the standalone game sketch
 python tools/make_font.py              # regenerate the bitmap font
+python tools/make_pet_sprites.py       # regenerate the pet's bodies
 python tools/make_icon.py              # regenerate the project icon
+
+python tools/preview_pet.py            # check the pet's layout before flashing it
+python tools/preview_launcher.py       # likewise for the carousel
 ```
 
 Rendering bypasses LVGL completely: the firmware owns one 360×360 RGB565 framebuffer
@@ -193,10 +199,30 @@ and vanishes. Tap it to score, three time-outs and it is over. It exists as much
 exercise the game interface as to be played — between it and clawd-roll both input
 paths and both ends of the drawing cost are covered.
 
+### clawd-pet
+
+A tamagotchi. Four needs — hunger, happiness, energy, cleanliness — all decay and all
+read "fuller is better"; health is derived from them rather than kept separately, so
+neglect shows up as illness instead of as a fifth bar; and the pet grows through four
+stages, gated on accumulated care rather than on age alone. It is saved to NVS, and
+time spent with the launcher or another app is accounted for when you come back.
+
+He is clawd rather than a sprite drawn for the purpose. `tools/make_pet_sprites.py`
+renders the same artwork the rolling game uses at one size per life stage — so growing
+up is something you can see — and punches the eyes out of it, recording where they
+were. `game_pet.cpp` draws its own eyes into that gap every frame, which is how four
+bodies cover seven moods: idle, happy, eating, asleep, being scrubbed, ill, and cross.
+
+It is meant to be handled. Tap him and he looks your way; tap again and he is pleased;
+keep it up and he tells you to stop. Press and hold to pick him up and put him
+somewhere else on the screen, and he drifts back when you let go. **SCRUB** starts a
+mini-game: hold the badge and shake it to work the dirt off, against a five-blob
+meter and a clock. The accelerometer is muted for a moment after every touch, because
+tapping the panel spikes it hard enough to read as a shake.
+
 ## Coexistence: our launcher and the XiaoZhi assistant
 
-The board ships with **two firmwares**, and this project preserves that arrangement
-rather than inventing one:
+The board ships with **two firmwares**, and this project preserves that arrangement rather than inventing one:
 
 ```
 factory  app  0x020000  6.57MB   the main application  <- our launcher lives here

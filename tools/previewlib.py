@@ -83,7 +83,7 @@ def apply_bezel(img):
 
 # ------------------------------------------------------------------- sprites ---
 def load_pet_sprites(path):
-    """Returns (palette, {name: (w, h, rowBytes, bytes)})."""
+    """Returns (palette, {name: (w, h, rowBytes, bytes, eyeDX, eyeDY, eyeR)})."""
     src = open(path, encoding="utf-8").read()
 
     pal = []
@@ -100,29 +100,27 @@ def load_pet_sprites(path):
         bits[mm.group(1)] = [int(x, 16) for x in re.findall(r"0x([0-9A-F]{2})", mm.group(3))]
 
     sprites = {}
-    for mm in re.finditer(r"\{ pet_bits_(\w+), (\d+), (\d+), (\d+) \}", src):
+    for mm in re.finditer(
+            r"\{ pet_bits_(\w+), (\d+), (\d+), (\d+), (-?\d+), (-?\d+), (\d+) \}", src):
         name = mm.group(1)
         w, h, rb = int(mm.group(2)), int(mm.group(3)), int(mm.group(4))
-        sprites[name] = (w, h, rb, bits[name])
+        sprites[name] = (w, h, rb, bits[name],
+                         int(mm.group(5)), int(mm.group(6)), int(mm.group(7)))
     return pal, sprites
 
 
-def draw_pet_sprite(px, pal, sprite, cx, cy, scale, bob=0.0):
-    scale = int(round(scale))
-    w, h, rb, data = sprite
-    ox = cx - w * scale * 0.5
-    oy = cy - h * scale * 0.5 + bob
+def draw_pet_body(px, pal, sprite, cx, cy):
+    """2bpp body sprite, drawn 1:1 -- each stage is already at its display size."""
+    w, h, rb, data = sprite[:4]
+    ox, oy = cx - w // 2, cy - h // 2
     for y in range(h):
         for x in range(w):
-            idx = (data[y * rb + (x >> 1)] >> ((x & 1) * 4)) & 0x0F
+            idx = (data[y * rb + (x >> 2)] >> ((x & 3) * 2)) & 3
             if not idx:
                 continue
-            col = pal[idx]
-            for dy in range(scale):
-                for dx in range(scale):
-                    xx, yy = int(ox + x * scale) + dx, int(oy + y * scale) + dy
-                    if 0 <= xx < SCR_W and 0 <= yy < SCR_H:
-                        px[xx, yy] = col
+            xx, yy = ox + x, oy + y
+            if 0 <= xx < SCR_W and 0 <= yy < SCR_H:
+                px[xx, yy] = pal[idx]
 
 
 # -------------------------------------------------------------------- output ---

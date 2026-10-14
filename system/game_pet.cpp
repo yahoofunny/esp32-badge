@@ -9,6 +9,7 @@
 
 #include "Display_ST77916.h"
 #include "esp_random.h"
+#include "assets_pet.h"
 #include "gfx.h"
 #include "input.h"
 
@@ -53,116 +54,156 @@ static const uint32_t SAVE_MAGIC = 0x50544543;   // 'CETP'
 
 static uint32_t petSessionId = 0;
 
-// --------------------------------------------------------------- the face ------
-// The original draws its face with kaomoji -- round-eyed bear faces and their many
-// variants -- which are Unicode, and therefore unrenderable by the 8x8 ASCII font
-// used here.
+// ------------------------------------------------------------------ colours ----
+static const uint16_t COL_BG     = PX(RGB565(0x0E, 0x0E, 0x16));
+static const uint16_t COL_TEXT   = PX(RGB565(0xEC, 0xEC, 0xF4));
+static const uint16_t COL_DIM    = PX(RGB565(0x6E, 0x6E, 0x80));
+static const uint16_t COL_RULE   = PX(RGB565(0x2A, 0x2A, 0x3A));
+static const uint16_t COL_ACCENT = PX(RGB565(0xD9, 0x77, 0x57));   // clawd's rust
+static const uint16_t COL_WARN   = PX(RGB565(0xE0, 0x50, 0x50));
+
+// ------------------------------------------------------------------- the body ---
+// The pet is clawd himself, not a cartoon face drawn in his place.
+// tools/make_pet_sprites.py renders him at four sizes -- one per life stage, from
+// the same artwork the rolling game uses -- so growing up is something you can see,
+// and punches the eyes out of that artwork. Everything expressive is then drawn
+// into that gap, which is what lets four body sprites carry seven moods.
 //
-// Writing the equivalent in ASCII was tried first and does not work: at 8x8 the
-// parenthesis is almost a straight stroke, so scaling it up produces square brackets
-// and the result reads as [ ^ _ ^ ] rather than as a face. Rendering it on the host
-// before flashing is what caught that, and it is why the face is drawn.
-//
-// Drawing is also what a kaomoji is: an eye style, a mouth style, and optionally a
-// pair of raised arms.
+// This replaced a fully drawn face. The face existed because kaomoji -- the
+// original's (o.o) and friends -- are Unicode, and their 8x8 ASCII equivalents
+// render as [ ^ _ ^ ]: at that size a parenthesis is a straight stroke. Drawn eyes
+// on a real body get the expressiveness back without giving up the character.
 enum { EYE_ROUND, EYE_HAPPY, EYE_SHUT, EYE_CROSS, EYE_ANGRY };
-enum { MOUTH_SMILE, MOUTH_OPEN, MOUTH_FLAT, MOUTH_FROWN };
+enum { EMOTE_NONE, EMOTE_HEART, EMOTE_ANGER, EMOTE_SICK, EMOTE_ZZZ };
 
-struct FaceDef { uint8_t eyes; uint8_t mouth; bool arms; };
+// A mood is a face plus a movement: which eyes, whether a mouth shows, what floats
+// over its shoulder, and how far it bobs. `bob` is an amplitude in pixels.
+struct MoodDef { uint8_t eyes; uint8_t emote; bool mouth; uint8_t bob; };
 
-static const FaceDef F_IDLE[]  = { {EYE_ROUND, MOUTH_SMILE, false},
-                                   {EYE_SHUT,  MOUTH_FLAT,  false},
-                                   {EYE_ROUND, MOUTH_SMILE, false},
-                                   {EYE_ROUND, MOUTH_OPEN,  false},
-                                   {EYE_ROUND, MOUTH_SMILE, false},
-                                   {EYE_HAPPY, MOUTH_OPEN,  false} };
-static const FaceDef F_HAPPY[] = { {EYE_HAPPY, MOUTH_SMILE, true},
-                                   {EYE_HAPPY, MOUTH_SMILE, false},
-                                   {EYE_HAPPY, MOUTH_OPEN,  true} };
-static const FaceDef F_EAT[]   = { {EYE_ROUND, MOUTH_OPEN,  false},
-                                   {EYE_SHUT,  MOUTH_OPEN,  false},
-                                   {EYE_ROUND, MOUTH_OPEN,  false} };
-static const FaceDef F_SLEEP[] = { {EYE_SHUT, MOUTH_FLAT,  false},
-                                   {EYE_SHUT, MOUTH_FROWN, false} };
-static const FaceDef F_BATH[]  = { {EYE_HAPPY, MOUTH_SMILE, false},
-                                   {EYE_ROUND, MOUTH_OPEN,  false},
-                                   {EYE_HAPPY, MOUTH_SMILE, false} };
-static const FaceDef F_SICK[]  = { {EYE_CROSS, MOUTH_FROWN, false},
-                                   {EYE_SHUT,  MOUTH_FROWN, false} };
-// Being poked too often. The eyes slant inwards, which is the smallest change that
-// still reads as cross rather than sad.
-static const FaceDef F_ANNOYED[] = { {EYE_ANGRY, MOUTH_FROWN, false},
-                                     {EYE_ANGRY, MOUTH_FLAT,  false} };
-
-struct AnimDef { const FaceDef *frames; uint8_t count; };
-static const AnimDef ANIMS[ANIM_COUNT] = {
-    { F_IDLE,    6 },
-    { F_HAPPY,   3 },
-    { F_EAT,     3 },
-    { F_SLEEP,   2 },
-    { F_BATH,    3 },
-    { F_SICK,    2 },
-    { F_ANNOYED, 2 },
+static const MoodDef MOODS[ANIM_COUNT] = {
+    /* IDLE    */ { EYE_ROUND, EMOTE_NONE,  false, 2 },
+    /* HAPPY   */ { EYE_HAPPY, EMOTE_HEART, false, 4 },
+    /* EAT     */ { EYE_SHUT,  EMOTE_NONE,  true,  3 },
+    /* SLEEP   */ { EYE_SHUT,  EMOTE_ZZZ,   false, 0 },
+    /* BATH    */ { EYE_HAPPY, EMOTE_HEART, false, 3 },
+    /* SICK    */ { EYE_CROSS, EMOTE_SICK,  false, 0 },
+    /* ANNOYED */ { EYE_ANGRY, EMOTE_ANGER, false, 4 },
 };
+
 static const float FRAME_SEC       = 0.45f;
 static const float ACTION_HOLD_SEC = 2.6f;
+static const float BOB_HZ          = 0.9f;
 
-// Face geometry, in pixels measured from the face centre.
-static const int EYE_DX = 26, EYE_DY = -8, EYE_R = 6;
-static const int MOUTH_DY = 14;
-
-static void drawEye(int x, int y, int style, uint16_t c)
+static void drawEye(int x, int y, int r, int style, uint16_t c, int dir = 1)
 {
     switch (style) {
     case EYE_HAPPY:
-        // An upward arc: the eye shut in a smile.
-        for (int i = -EYE_R; i <= EYE_R; i++) {
-            gfx::fillRect(x + i, y - (EYE_R - abs(i)) / 2, 1, 3, c);
+        // An upward arc -- the ^ of a ^_^ smile, which is the one kaomoji glyph that
+        // does survive at this size.
+        for (int i = -r; i <= r; i++) {
+            gfx::fillRect(x + i, y - (r - abs(i)) / 2, 1, 3, c);
         }
         break;
     case EYE_SHUT:
-        gfx::fillRect(x - EYE_R, y, 2 * EYE_R + 1, 2, c);
+        gfx::fillRect(x - r, y - 1, 2 * r + 1, 2, c);
         break;
     case EYE_CROSS:
-        gfx::line((float)(x - EYE_R), (float)(y - EYE_R), (float)(x + EYE_R), (float)(y + EYE_R), c);
-        gfx::line((float)(x + EYE_R), (float)(y - EYE_R), (float)(x - EYE_R), (float)(y + EYE_R), c);
+        gfx::line((float)(x - r), (float)(y - r), (float)(x + r), (float)(y + r), c);
+        gfx::line((float)(x + r), (float)(y - r), (float)(x - r), (float)(y + r), c);
         break;
-    case EYE_ANGRY: {
-        // Slanting inwards towards the nose: the brows-down look. `inner` is which way
-        // the eye leans, so the pair reads as crossed rather than as two slashes.
-        const bool left = (x < (int)SCR_CX);
-        for (int i = -EYE_R; i <= EYE_R; i++) {
-            const int drop = (EYE_R - abs(i)) / 3;
-            gfx::fillRect(x + i, y + (left ? drop : -drop), 1, 3, c);
+    case EYE_ANGRY:
+        // Inner end down, outer end up: the V of a scowl. `dir` mirrors it, because
+        // one call draws both eyes and only one of them leans each way. Curving it
+        // through the middle instead reads as sad, which is the wrong message.
+        for (int i = -r; i <= r; i++) {
+            const int t = (dir > 0) ? (i + r) : (r - i);
+            gfx::fillRect(x + i, y - r / 2 + t / 2, 1, 2, c);
         }
         break;
-    }
     default:
-        gfx::fillCircle((float)x, (float)y, (float)EYE_R, c);
+        gfx::fillCircle((float)x, (float)y, (float)r, c);
         break;
     }
 }
 
-static void drawMouth(int x, int y, int style, uint16_t c)
+static void drawMouth(int x, int y, int r, uint16_t c)
 {
-    const int half = EYE_DX - 8;
-    switch (style) {
-    case MOUTH_SMILE:
-        for (int i = -half; i <= half; i++) {
-            gfx::fillRect(x + i, y + abs(i) / 3, 1, 2, c);
+    // An open, chewing mouth: a half-disc under the eyes.
+    for (int i = -r; i <= r; i++) {
+        gfx::fillRect(x + i, y, 1, (r - abs(i)) * 3 / 4 + 1, c);
+    }
+}
+
+// Writes one body sprite straight into the framebuffer. Going through fillRect for
+// each pixel would be simpler and too slow: the adult body is 18816 pixels, and
+// every frame repaints the whole screen anyway.
+static void blitBody(const pet_sprite_t &s, int cx, int cy)
+{
+    const uint16_t body = PX(pet_palette[1]);
+    const int x0 = cx - s.w / 2;
+    const int y0 = cy - s.h / 2;
+    for (int y = 0; y < s.h; y++) {
+        const int dy = y0 + y;
+        if ((unsigned)dy >= (unsigned)SCR_H) continue;
+        const uint8_t *row = s.bits + y * s.rowBytes;
+        uint16_t *out = fb + dy * SCR_W;
+        for (int x = 0; x < s.w; x++) {
+            if ((row[x >> 2] >> ((x & 3) * 2)) & 3) {
+                const int dx = x0 + x;
+                if ((unsigned)dx < (unsigned)SCR_W) out[dx] = body;
+            }
         }
-        break;
-    case MOUTH_OPEN:
-        gfx::fillCircle((float)x, (float)y + 4.0f, 6.0f, c);
-        break;
-    case MOUTH_FROWN:
-        for (int i = -half; i <= half; i++) {
-            gfx::fillRect(x + i, y + 5 - abs(i) / 3, 1, 2, c);
+    }
+}
+
+// The marks that appear over clawd's shoulder. Drawn rather than stored as sprites:
+// each is a handful of shapes, and at 20 px across a bitmap would cost about as many
+// bytes as the pet's whole body.
+static void drawHeart(float x, float y, float r, uint16_t c)
+{
+    gfx::fillCircle(x - r * 0.5f, y - r * 0.3f, r * 0.55f, c);
+    gfx::fillCircle(x + r * 0.5f, y - r * 0.3f, r * 0.55f, c);
+    for (int i = -(int)r; i <= (int)r; i++) {
+        gfx::fillRect((int)x + i, (int)(y + r * 0.25f), 1,
+                      (int)((r - abs(i)) * 0.9f), c);
+    }
+}
+
+static void drawAngerMark(float x, float y, float r, uint16_t c)
+{
+    // Four strokes out of a centre: the cross-popping vein, which needs no
+    // explanation to anyone who has watched a cartoon.
+    for (int k = 0; k < 4; k++) {
+        const float a = PI_F * 0.25f + (float)k * PI_F * 0.5f;
+        // Two parallel strokes per arm: at this size a single one-pixel line reads
+        // as a speck rather than as a vein.
+        for (int t = 0; t < 2; t++) {
+            const float o = (float)t * 0.22f + 0.11f;
+            gfx::line(x + cosf(a) * r * 0.30f + sinf(a) * r * o,
+                      y + sinf(a) * r * 0.30f - cosf(a) * r * o,
+                      x + cosf(a) * r + sinf(a) * r * o,
+                      y + sinf(a) * r - cosf(a) * r * o, c);
         }
+    }
+}
+
+static void drawSickMark(float x, float y, float r, uint16_t c)
+{
+    gfx::fillRect((int)(x - r * 0.28f), (int)(y - r), (int)(r * 0.56f), (int)(2 * r), c);
+    gfx::fillRect((int)(x - r), (int)(y - r * 0.28f), (int)(2 * r), (int)(r * 0.56f), c);
+}
+
+static void drawEmote(uint8_t emote, float x, float y)
+{
+    switch (emote) {
+    case EMOTE_HEART: drawHeart(x, y, 9.0f, COL_WARN); break;
+    case EMOTE_ANGER: drawAngerMark(x, y, 9.0f, COL_WARN); break;
+    case EMOTE_SICK:  drawSickMark(x, y, 7.0f, COL_WARN); break;
+    case EMOTE_ZZZ:
+        gfx::text("z", (int)x - 6, (int)y - 12, COL_TEXT, 2);
+        gfx::text("z", (int)x + 8, (int)y, COL_DIM, 1);
         break;
-    default:
-        gfx::fillRect(x - 6, y + 2, 13, 2, c);
-        break;
+    default: break;
     }
 }
 
@@ -186,19 +227,13 @@ static const int RULE1_Y = 58;
 static const int METER_COL_A = 54, METER_COL_B = 196;
 static const int METER_ROW0  = 74,  METER_ROW1 = 88;
 static const int HEALTH_Y    = 106;
-static const int FACE_CY     = 178;
+static const int FACE_CY     = 174;   // the adult body is 112 px tall, so
+                                      // this clears the health row and the thought
 static const int THOUGHT_Y   = 240;
 static const int RULE2_Y     = 262;
 static const int MENU_Y0     = 278, MENU_PITCH = 18;
 static const int RULE_X0 = 62, RULE_X1 = 298;
 static const int BAR_CHARS = 8;       // '#' filled, '.' empty
-
-static const uint16_t COL_BG     = PX(RGB565(0x0E, 0x0E, 0x16));
-static const uint16_t COL_TEXT   = PX(RGB565(0xEC, 0xEC, 0xF4));
-static const uint16_t COL_DIM    = PX(RGB565(0x6E, 0x6E, 0x80));
-static const uint16_t COL_RULE   = PX(RGB565(0x2A, 0x2A, 0x3A));
-static const uint16_t COL_ACCENT = PX(RGB565(0xD9, 0x77, 0x57));   // clawd's rust
-static const uint16_t COL_WARN   = PX(RGB565(0xE0, 0x50, 0x50));
 
 static const char *const ACT_LABEL[ACT_COUNT] = { "FEED", "PLAY", "PET", "SLEEP", "SCRUB", "NAME" };
 
@@ -448,14 +483,34 @@ void GamePet::act(int a)
 // ------------------------------------------------------------------ drawing ----
 void GamePet::drawIcon(float cx, float cy, float size) const
 {
-    // The face in miniature: two eyes and a smile, sized to the launcher tile.
-    const int r  = (int)fmaxf(2.0f, size * 0.10f);
-    const int dx = (int)(size * 0.22f);
-    gfx::fillCircle(cx - dx, cy - size * 0.06f, (float)r, COL_ACCENT);
-    gfx::fillCircle(cx + dx, cy - size * 0.06f, (float)r, COL_ACCENT);
-    for (int i = -dx; i <= dx; i++) {
-        gfx::fillRect((int)cx + i, (int)(cy + size * 0.16f) + abs(i) / 3, 1, 2, COL_ACCENT);
+    // clawd in miniature, laid out from the same proportions as the body sprites so
+    // the launcher tile and the pet itself are recognisably the same character: a
+    // block of a head, an arm bar through it, four legs.
+    const int w  = (int)size;
+    const int bw = (int)(w * 0.62f);          // body/head width, arms reach past it
+    const int x  = (int)cx - bw / 2;
+    const int y  = (int)cy - w / 2;
+    const int headH = (int)(w * 0.44f);
+    const int armY  = y + headH;
+    const int armH  = (int)(w * 0.16f);
+    const int legY  = armY + armH;
+    const int legH  = (int)(w * 0.40f);
+    const int legW  = (int)(w * 0.11f);
+
+    gfx::fillRect(x, y, bw, headH, COL_ACCENT);                       // head
+    gfx::fillRect((int)cx - (int)(w * 0.5f), armY, (int)(w * 0.5f) * 2, armH, COL_ACCENT);
+    gfx::fillRect(x, armY, bw, armH + legH, COL_ACCENT);              // torso
+
+    const int step = (bw - legW) / 3;
+    for (int i = 0; i < 4; i++) {
+        gfx::fillRect(x + i * step, legY + armH, legW, legH, COL_ACCENT);
     }
+
+    const int er = (int)fmaxf(1.0f, w * 0.055f);
+    const int ex = (int)(bw * 0.30f);
+    const int ey = y + (int)(headH * 0.30f);
+    gfx::fillRect((int)cx - ex - er, ey, er, er, COL_BG);
+    gfx::fillRect((int)cx + ex, ey, er, er, COL_BG);
 }
 
 void GamePet::drawMeter(const char *label, float value, int x, int y)
@@ -472,50 +527,67 @@ void GamePet::drawMeter(const char *label, float value, int x, int y)
     gfx::text(line, x, y, (value < 30.0f) ? COL_WARN : COL_ACCENT, 1);
 }
 
-void GamePet::drawFace()
+void GamePet::drawPet()
 {
-    const AnimDef &a = ANIMS[anim];
-    const FaceDef &f = a.frames[animFrame % a.count];
+    const MoodDef &m = MOODS[anim];
+    const pet_sprite_t &s = pet_sprites[S.stage < PET_STAGE_COUNT ? S.stage : PET_STAGE_COUNT - 1];
 
     // A quick wobble while the pet is cross, so being poked too often has a physical
     // tell and not only a change of face.
-    const int jx = (jitter > 0.0f) ? (int)(sinf(jitter * 45.0f) * 4.0f) : 0;
+    const int jx = (jitter > 0.0f) ? (int)(sinf(jitter * 45.0f) * 5.0f) : 0;
+    const int bob = (m.bob > 0) ? (int)lroundf(sinf(bobPhase * 2.0f * PI_F * BOB_HZ) * m.bob) : 0;
 
     const int cx = (int)petX + jx;
-    const int cy = (int)petY;
+    const int cy = (int)petY + bob;
 
-    // Raised arms, as a kaomoji shows with its leading and trailing slashes.
-    if (f.arms) {
-        for (int i = 0; i < 14; i++) {
-            gfx::fillRect(cx - EYE_DX - 12 - i, cy + EYE_DY + 6 + i, 3, 3, COL_ACCENT);
-            gfx::fillRect(cx + EYE_DX + 10 + i, cy + EYE_DY + 6 + i, 3, 3, COL_ACCENT);
-        }
-    }
+    blitBody(s, cx, cy);
 
-    // The eyes lean towards wherever the last touch was, which is cheap to do and
-    // reads as the pet paying attention.
+    // The eyes are the pet's own, drawn into the gap the artwork left for them, so
+    // one body covers every mood. They lean towards the last touch, which is cheap
+    // and reads as paying attention.
     const int lx = (int)lroundf(lookX);
     const int ly = (int)lroundf(lookY);
-    drawEye(cx - EYE_DX + lx, cy + EYE_DY + ly, f.eyes, COL_ACCENT);
-    drawEye(cx + EYE_DX + lx, cy + EYE_DY + ly, f.eyes, COL_ACCENT);
-    drawMouth(cx + lx / 2, cy + MOUTH_DY, f.mouth, COL_ACCENT);
+    const int ey = cy + s.eyeDY + ly;
+    uint8_t eyes = m.eyes;
+    // An occasional blink, counted off the animation's own frame clock rather than a
+    // separate timer. Blinking overrides the mood for a single frame.
+    if (anim == ANIM_IDLE && (animFrame % 4) == 3) eyes = EYE_SHUT;
+
+    const uint16_t ink = PX(pet_palette[2]);
+    // eyeDX is the distance from the sprite's centre to one eye, not a coordinate.
+    const int off = s.eyeDX + lx;
+    drawEye(cx - off, ey, s.eyeR, eyes, ink, +1);
+    drawEye(cx + off, ey, s.eyeR, eyes, ink, -1);
+    if (m.mouth) drawMouth(cx + lx / 2, ey + s.eyeR * 2, s.eyeR, ink);
+
+    // The mood mark sits at the pet's shoulder, clear of the meters above.
+    if (m.emote != EMOTE_NONE) {
+        drawEmote(m.emote, (float)(cx + s.w / 2 - 10), (float)(cy - s.h / 2 + 6));
+    }
 }
 
-// The pet's touch target: the whole drawn face plus slack, because a finger is not a
-// pointer. Deliberately generous -- this is the thing the user is meant to grab.
-float GamePet::petHitRadius() const
+// The pet's touch target: an ellipse over the body, plus slack, because a finger is
+// not a pointer. Deliberately generous -- this is the thing the user is meant to
+// grab -- but not a circle, which at the adult width would swallow the menu below.
+bool GamePet::petHit(int x, int y) const
 {
-    return EYE_DX + EYE_R + 14.0f;
+    const pet_sprite_t &s = pet_sprites[S.stage < PET_STAGE_COUNT ? S.stage : PET_STAGE_COUNT - 1];
+    const float rx = s.w * 0.5f + 8.0f;
+    const float ry = s.h * 0.5f + 8.0f;
+    const float dx = (float)x - petX;
+    const float dy = (float)y - petY;
+    return (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) <= 1.0f;
 }
 
 void GamePet::drawDirt()
 {
-    // Blobs stuck to the pet, placed on a ring so they never hide the face.
+    // Blobs stuck to the pet, placed on a ring so they never hide its face.
+    const pet_sprite_t &s = pet_sprites[S.stage < PET_STAGE_COUNT ? S.stage : PET_STAGE_COUNT - 1];
+    const float rx = s.w * 0.30f + 14.0f;
+    const float ry = s.h * 0.30f + 14.0f;
     for (int i = 0; i < dirt; i++) {
-        const float ang = -PI_F * 0.5f + i * (2.0f * PI_F / 5.0f);
-        const int x = (int)(petX + cosf(ang) * (petY - 0.0f) * 0.0f + cosf(ang) * 34.0f);
-        const int y = (int)(petY + sinf(ang) * 30.0f + 6.0f);
-        gfx::fillCircle((float)x, (float)y, 5.0f, COL_DIM);
+        const float ang = -PI_F * 0.5f + (float)i * (2.0f * PI_F / 5.0f);
+        gfx::fillCircle(petX + cosf(ang) * rx, petY + sinf(ang) * ry + 4.0f, 5.0f, COL_DIM);
     }
 }
 
@@ -661,6 +733,7 @@ void GamePet::enter()
     saveCounter = 0.0f;
     thoughtTimer = 0.0f;
     lastTapped = -1;
+    bobPhase = 0.0f;
     setDirty(0, SCR_H - 1);
 }
 
@@ -709,7 +782,6 @@ void GamePet::update(float dt)
 
     // --- touch --------------------------------------------------------------
     lastTapped = -1;
-    const float r = petHitRadius();
 
     // The eyes follow the finger whenever it is down, fading back when it lifts.
     if (input::touchDown()) {
@@ -730,8 +802,8 @@ void GamePet::update(float dt)
     } else {
         // Holding on the pet picks it up. The touch is captured on press rather than
         // on release, so a drag that ends off the pet still counts as a drag.
-        const float hx = input::tapX() - petX, hy = input::tapY() - petY;
-        if (input::touchDown() && hx * hx + hy * hy <= r * r && input::touchHeldMs() > 200) {
+        if (input::touchDown() && petHit(input::tapX(), input::tapY())
+            && input::touchHeldMs() > 200) {
             dragging = true;
         }
         if (dragging) {
@@ -740,17 +812,16 @@ void GamePet::update(float dt)
         } else {
             // Drifts back to its resting place.
             petX += (SCR_CX - petX) * fminf(1.0f, 2.5f * dt);
-            petY += (176.0f - petY) * fminf(1.0f, 2.5f * dt);
+            petY += ((float)FACE_CY - petY) * fminf(1.0f, 2.5f * dt);
         }
 
         if (input::tapped()) {
             // Touching the panel spikes the accelerometer, so the IMU is ignored for a
             // moment afterwards rather than being read as a shake.
             accelMute = 0.25f;
-            const float rx = input::tapX() - petX, ry = input::tapY() - petY;
             if (dragging) {
                 dragging = false;               // putting it down is not a poke
-            } else if (rx * rx + ry * ry <= r * r) {
+            } else if (petHit(input::tapX(), input::tapY())) {
                 handlePetTouch();
             } else {
                 handleMenuTouch();
@@ -764,6 +835,7 @@ void GamePet::update(float dt)
         if (pokeCool <= 0.0f) pokeHeat = 0.0f;
     }
     if (jitter > 0.0f) jitter -= dt;
+    bobPhase += dt;
 
     saveCounter += ms;
     if (saveCounter >= SAVE_PERIOD_MS) {
@@ -845,7 +917,7 @@ void GamePet::render()
         gfx::text(line, (int)(SCR_CX - w * 0.5f), HEALTH_Y, COL_TEXT, 1);
     }
 
-    drawFace();
+    drawPet();
 
     if (thought[0]) {
         gfx::textCentered(thought, THOUGHT_Y, COL_TEXT, 1);
@@ -878,7 +950,7 @@ void GamePet::renderShakeGame()
     }
 
     drawDirt();
-    drawFace();
+    drawPet();
 
     if (thought[0]) {
         gfx::textCentered(thought, THOUGHT_Y, COL_TEXT, 1);
