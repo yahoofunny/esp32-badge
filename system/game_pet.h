@@ -23,7 +23,7 @@
 // themselves with them; private class enums are not visible there.
 enum PetAction { ACT_FEED, ACT_PLAY, ACT_PET, ACT_SLEEP, ACT_BATHE, ACT_NAME, ACT_COUNT };
 enum PetAnim   { ANIM_IDLE, ANIM_HAPPY, ANIM_EAT, ANIM_SLEEP, ANIM_BATH, ANIM_SICK,
-                 ANIM_COUNT };
+                 ANIM_ANNOYED, ANIM_COUNT };
 
 class GamePet : public Game {
 public:
@@ -75,6 +75,31 @@ private:
 
     State S;
 
+    // Two modes. The pet is draggable and pokeable in both; the shake game takes over
+    // the meter area while it runs.
+    enum { MODE_PET, MODE_SHAKE };
+    uint8_t mode = MODE_PET;
+
+    // Direct manipulation. The pet sits at (petX, petY) rather than at a fixed point,
+    // because being able to pick it up is most of what makes it feel alive; it drifts
+    // back to rest when released. lookX/lookY nudge the eyes towards the last touch.
+    float petX = SCR_CX, petY = 176.0f;
+    float lookX = 0.0f, lookY = 0.0f;
+    bool  dragging = false;
+    float pokeHeat = 0.0f;      // builds with rapid taps; spills over into annoyance
+    float pokeCool = 0.0f;
+    float jitter = 0.0f;
+    float faceJx = 0.0f;   // horizontal wobble applied while the pet is annoyed
+
+    // Shake-off-the-dirt. Accelerometer spikes past a threshold knock a blob off, with
+    // a refractory period so one shake cannot count twice.
+    uint8_t dirt = 0;
+    float   shakeIdle = 0.0f;
+    float   shakeRefractory = 0.0f;
+    float   accelPrevMag = 1.0f;
+    float   accelMute = 0.0f;   // ignores the IMU briefly after a tap: touching the
+                                // panel spikes the accelerometer hard
+
     // The face. An animation is a short loop of emoticon frames; an action switches to
     // its own for a moment and the pet then drifts back to idle.
     uint8_t anim      = ANIM_IDLE;
@@ -109,6 +134,16 @@ private:
     // --- presentation -------------------------------------------------------
     void drawMeter(const char *label, float value, int x, int y);
     void drawFace();
+    void drawDirt();
     void drawMenu();
     void layoutMenu(float *xs, float *ys, float *ws, bool *enabled, int *count) const;
+
+    // --- interaction --------------------------------------------------------
+    void handlePetTouch();          // drag / poke, on the pet itself
+    void handleMenuTouch();
+    void startShakeGame();
+    void finishShakeGame(bool completed);
+    void updateShakeGame(float dt);
+    void renderShakeGame();
+    float petHitRadius() const;
 };

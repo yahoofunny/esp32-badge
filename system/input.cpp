@@ -153,6 +153,11 @@ void update(float dt)
 float tiltX() { return tiltXv; }
 float tiltY() { return tiltYv; }
 
+void readRawAccel(float out[3])
+{
+    readAccel(out);
+}
+
 bool touchDown() { return down; }
 bool tapped()    { return tapFlag; }
 int  tapX()      { return tapXv; }

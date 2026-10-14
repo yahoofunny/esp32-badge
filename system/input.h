@@ -21,6 +21,11 @@ void update(float dt);
 float tiltX();
 float tiltY();
 
+// The raw accelerometer vector, in g, with no trimming or deadzone. Tilt control wants
+// the processed values above; anything detecting *motion* rather than orientation needs
+// these, because the magnitude of this vector is 1 at rest and spikes when shaken.
+void readRawAccel(float out[3]);
+
 // --- touch ------------------------------------------------------------------
 bool touchDown();
 bool tapped();                  // true for exactly one frame, on release

@@ -65,7 +65,7 @@ static uint32_t petSessionId = 0;
 //
 // Drawing is also what a kaomoji is: an eye style, a mouth style, and optionally a
 // pair of raised arms.
-enum { EYE_ROUND, EYE_HAPPY, EYE_SHUT, EYE_CROSS };
+enum { EYE_ROUND, EYE_HAPPY, EYE_SHUT, EYE_CROSS, EYE_ANGRY };
 enum { MOUTH_SMILE, MOUTH_OPEN, MOUTH_FLAT, MOUTH_FROWN };
 
 struct FaceDef { uint8_t eyes; uint8_t mouth; bool arms; };
@@ -89,15 +89,20 @@ static const FaceDef F_BATH[]  = { {EYE_HAPPY, MOUTH_SMILE, false},
                                    {EYE_HAPPY, MOUTH_SMILE, false} };
 static const FaceDef F_SICK[]  = { {EYE_CROSS, MOUTH_FROWN, false},
                                    {EYE_SHUT,  MOUTH_FROWN, false} };
+// Being poked too often. The eyes slant inwards, which is the smallest change that
+// still reads as cross rather than sad.
+static const FaceDef F_ANNOYED[] = { {EYE_ANGRY, MOUTH_FROWN, false},
+                                     {EYE_ANGRY, MOUTH_FLAT,  false} };
 
 struct AnimDef { const FaceDef *frames; uint8_t count; };
 static const AnimDef ANIMS[ANIM_COUNT] = {
-    { F_IDLE,  6 },
-    { F_HAPPY, 3 },
-    { F_EAT,   3 },
-    { F_SLEEP, 2 },
-    { F_BATH,  3 },
-    { F_SICK,  2 },
+    { F_IDLE,    6 },
+    { F_HAPPY,   3 },
+    { F_EAT,     3 },
+    { F_SLEEP,   2 },
+    { F_BATH,    3 },
+    { F_SICK,    2 },
+    { F_ANNOYED, 2 },
 };
 static const float FRAME_SEC       = 0.45f;
 static const float ACTION_HOLD_SEC = 2.6f;
@@ -122,6 +127,16 @@ static void drawEye(int x, int y, int style, uint16_t c)
         gfx::line((float)(x - EYE_R), (float)(y - EYE_R), (float)(x + EYE_R), (float)(y + EYE_R), c);
         gfx::line((float)(x + EYE_R), (float)(y - EYE_R), (float)(x - EYE_R), (float)(y + EYE_R), c);
         break;
+    case EYE_ANGRY: {
+        // Slanting inwards towards the nose: the brows-down look. `inner` is which way
+        // the eye leans, so the pair reads as crossed rather than as two slashes.
+        const bool left = (x < (int)SCR_CX);
+        for (int i = -EYE_R; i <= EYE_R; i++) {
+            const int drop = (EYE_R - abs(i)) / 3;
+            gfx::fillRect(x + i, y + (left ? drop : -drop), 1, 3, c);
+        }
+        break;
+    }
     default:
         gfx::fillCircle((float)x, (float)y, (float)EYE_R, c);
         break;
@@ -185,7 +200,7 @@ static const uint16_t COL_RULE   = PX(RGB565(0x2A, 0x2A, 0x3A));
 static const uint16_t COL_ACCENT = PX(RGB565(0xD9, 0x77, 0x57));   // clawd's rust
 static const uint16_t COL_WARN   = PX(RGB565(0xE0, 0x50, 0x50));
 
-static const char *const ACT_LABEL[ACT_COUNT] = { "FEED", "PLAY", "PET", "SLEEP", "BATHE", "NAME" };
+static const char *const ACT_LABEL[ACT_COUNT] = { "FEED", "PLAY", "PET", "SLEEP", "SCRUB", "NAME" };
 
 // ------------------------------------------------------------------ helpers ----
 static inline float clampf(float v, float lo, float hi)
@@ -412,11 +427,9 @@ void GamePet::act(int a)
         }
         break;
     case ACT_BATHE:
-        S.cleanliness = 100.0f;
-        S.happiness = clampf(S.happiness + 5.0f, 0, 100);
-        say("all clean!");
-        setAnimation(ANIM_BATH, ACTION_HOLD_SEC);
-        break;
+        // Cleaning is the shake game rather than a bar that moves by itself.
+        startShakeGame();
+        return;   // startShakeGame saves its own outcome
     case ACT_NAME: {
         // No keyboard on a badge, so the pet is renamed by cycling a short list.
         int cur = 0;
@@ -464,8 +477,12 @@ void GamePet::drawFace()
     const AnimDef &a = ANIMS[anim];
     const FaceDef &f = a.frames[animFrame % a.count];
 
-    const int cx = (int)SCR_CX;
-    const int cy = FACE_CY;
+    // A quick wobble while the pet is cross, so being poked too often has a physical
+    // tell and not only a change of face.
+    const int jx = (jitter > 0.0f) ? (int)(sinf(jitter * 45.0f) * 4.0f) : 0;
+
+    const int cx = (int)petX + jx;
+    const int cy = (int)petY;
 
     // Raised arms, as a kaomoji shows with its leading and trailing slashes.
     if (f.arms) {
@@ -475,9 +492,94 @@ void GamePet::drawFace()
         }
     }
 
-    drawEye(cx - EYE_DX, cy + EYE_DY, f.eyes, COL_ACCENT);
-    drawEye(cx + EYE_DX, cy + EYE_DY, f.eyes, COL_ACCENT);
-    drawMouth(cx, cy + MOUTH_DY, f.mouth, COL_ACCENT);
+    // The eyes lean towards wherever the last touch was, which is cheap to do and
+    // reads as the pet paying attention.
+    const int lx = (int)lroundf(lookX);
+    const int ly = (int)lroundf(lookY);
+    drawEye(cx - EYE_DX + lx, cy + EYE_DY + ly, f.eyes, COL_ACCENT);
+    drawEye(cx + EYE_DX + lx, cy + EYE_DY + ly, f.eyes, COL_ACCENT);
+    drawMouth(cx + lx / 2, cy + MOUTH_DY, f.mouth, COL_ACCENT);
+}
+
+// The pet's touch target: the whole drawn face plus slack, because a finger is not a
+// pointer. Deliberately generous -- this is the thing the user is meant to grab.
+float GamePet::petHitRadius() const
+{
+    return EYE_DX + EYE_R + 14.0f;
+}
+
+void GamePet::drawDirt()
+{
+    // Blobs stuck to the pet, placed on a ring so they never hide the face.
+    for (int i = 0; i < dirt; i++) {
+        const float ang = -PI_F * 0.5f + i * (2.0f * PI_F / 5.0f);
+        const int x = (int)(petX + cosf(ang) * (petY - 0.0f) * 0.0f + cosf(ang) * 34.0f);
+        const int y = (int)(petY + sinf(ang) * 30.0f + 6.0f);
+        gfx::fillCircle((float)x, (float)y, 5.0f, COL_DIM);
+    }
+}
+
+void GamePet::startShakeGame()
+{
+    mode = MODE_SHAKE;
+    dirt = 5;
+    shakeIdle = 0.0f;
+    shakeRefractory = 0.0f;
+    accelPrevMag = 1.0f;
+    say("shake it off!");
+    setAnimation(ANIM_BATH, 0.0f);
+}
+
+void GamePet::finishShakeGame(bool completed)
+{
+    mode = MODE_PET;
+    // Partial credit: whatever came off still counts, so a short attempt is never
+    // wasted. Finishing the job is what the pet actually thanks you for.
+    const float share = (5 - (float)dirt) / 5.0f;
+    S.cleanliness = clampf(S.cleanliness + share * 55.0f, 0, 100);
+    if (completed) {
+        S.happiness = clampf(S.happiness + 10.0f, 0, 100);
+        say("all clean!");
+        setAnimation(ANIM_HAPPY, ACTION_HOLD_SEC);
+    } else {
+        say("that will do");
+    }
+    dirt = 0;
+    save();
+}
+
+void GamePet::updateShakeGame(float dt)
+{
+    // A shake is a spike in the magnitude of acceleration. The resting magnitude is
+    // 1 g, so anything well past that is motion rather than orientation.
+    float a[3];
+    // input::tiltX/Y are trimmed and deadzoned, which is wrong for detecting a spike,
+    // so the raw read is taken here instead.
+    input::readRawAccel(a);
+    const float mag = sqrtf(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+
+    if (shakeRefractory > 0.0f) shakeRefractory -= dt;
+    if (accelMute > 0.0f) accelMute -= dt;
+
+    const float delta = fabsf(mag - accelPrevMag);
+    accelPrevMag = mag;
+
+    if (accelMute <= 0.0f && shakeRefractory <= 0.0f && delta > 0.9f) {
+        shakeRefractory = 0.18f;      // one shake must not count twice
+        if (dirt > 0) {
+            dirt--;
+            say(dirt ? "keep going!" : "done!");
+            if (dirt == 0) {
+                finishShakeGame(true);
+                return;
+            }
+        }
+    }
+
+    shakeIdle += dt;
+    if (shakeIdle > 20.0f) {
+        finishShakeGame(false);       // gives up rather than trapping the player
+    }
 }
 
 void GamePet::layoutMenu(float *xs, float *ys, float *ws, bool *enabled, int *count) const
@@ -607,28 +709,107 @@ void GamePet::update(float dt)
 
     // --- touch --------------------------------------------------------------
     lastTapped = -1;
-    if (input::tapped()) {
-        float xs[ACT_COUNT], ys[ACT_COUNT], ws[ACT_COUNT];
-        bool en[ACT_COUNT];
-        int n = 0;
-        layoutMenu(xs, ys, ws, en, &n);
-        for (int i = 0; i < n; i++) {
-            // Generous vertically and a few pixels wide: these are words rather than
-            // tiles, and a finger is not a pointer.
-            const float dx = input::tapX() - (xs[i] + ws[i] * 0.5f);
-            const float dy = input::tapY() - (ys[i] + 3);
-            if (fabsf(dx) <= ws[i] * 0.5f + 6.0f && fabsf(dy) <= 12.0f) {
-                lastTapped = i;
-                act(i);
-                break;
+    const float r = petHitRadius();
+
+    // The eyes follow the finger whenever it is down, fading back when it lifts.
+    if (input::touchDown()) {
+        lookX = clampf((input::tapX() - petX) * 0.12f, -5.0f, 5.0f);
+        lookY = clampf((input::tapY() - petY) * 0.12f, -5.0f, 5.0f);
+    } else {
+        lookX *= 1.0f - fminf(1.0f, 4.0f * dt);
+        lookY *= 1.0f - fminf(1.0f, 4.0f * dt);
+    }
+
+    if (mode == MODE_SHAKE) {
+        // Any tap leaves the game, so it can never trap the player.
+        if (input::tapped()) {
+            finishShakeGame(dirt == 0);
+        } else {
+            updateShakeGame(dt);
+        }
+    } else {
+        // Holding on the pet picks it up. The touch is captured on press rather than
+        // on release, so a drag that ends off the pet still counts as a drag.
+        const float hx = input::tapX() - petX, hy = input::tapY() - petY;
+        if (input::touchDown() && hx * hx + hy * hy <= r * r && input::touchHeldMs() > 200) {
+            dragging = true;
+        }
+        if (dragging) {
+            petX = clampf((float)input::tapX(), 64.0f, 296.0f);
+            petY = clampf((float)input::tapY(), 96.0f, 244.0f);
+        } else {
+            // Drifts back to its resting place.
+            petX += (SCR_CX - petX) * fminf(1.0f, 2.5f * dt);
+            petY += (176.0f - petY) * fminf(1.0f, 2.5f * dt);
+        }
+
+        if (input::tapped()) {
+            // Touching the panel spikes the accelerometer, so the IMU is ignored for a
+            // moment afterwards rather than being read as a shake.
+            accelMute = 0.25f;
+            const float rx = input::tapX() - petX, ry = input::tapY() - petY;
+            if (dragging) {
+                dragging = false;               // putting it down is not a poke
+            } else if (rx * rx + ry * ry <= r * r) {
+                handlePetTouch();
+            } else {
+                handleMenuTouch();
             }
         }
     }
+
+    // Poke heat cools off, so a burst of taps annoys while a steady one does not.
+    if (pokeCool > 0.0f) {
+        pokeCool -= dt;
+        if (pokeCool <= 0.0f) pokeHeat = 0.0f;
+    }
+    if (jitter > 0.0f) jitter -= dt;
 
     saveCounter += ms;
     if (saveCounter >= SAVE_PERIOD_MS) {
         saveCounter = 0.0f;
         save();
+    }
+}
+
+void GamePet::handlePetTouch()
+{
+    pokeHeat += 1.0f;
+    pokeCool = 1.2f;
+
+    if (pokeHeat >= 3.0f) {
+        // Rough handling. Losing a little happiness is the point: poking is not the
+        // same as petting, and the pet says so.
+        S.happiness = clampf(S.happiness - 2.0f, 0, 100);
+        say("hey, that is enough");
+        setAnimation(ANIM_ANNOYED, ACTION_HOLD_SEC);
+        jitter = 0.6f;
+    } else {
+        S.happiness = clampf(S.happiness + 6.0f, 0, 100);
+        S.attentions++;
+        say("hehe");
+        setAnimation(ANIM_HAPPY, ACTION_HOLD_SEC);
+    }
+    save();
+}
+
+void GamePet::handleMenuTouch()
+{
+    float xs[ACT_COUNT], ys[ACT_COUNT], ws[ACT_COUNT];
+    bool en[ACT_COUNT];
+    int n = 0;
+    layoutMenu(xs, ys, ws, en, &n);
+    for (int i = 0; i < n; i++) {
+        // Generous vertically and a few pixels wide: these are words rather than
+        // tiles, and a finger is not a pointer. Touch accuracy is worst at the bottom
+        // of a panel, which is where this menu sits.
+        const float dx = input::tapX() - (xs[i] + ws[i] * 0.5f);
+        const float dy = input::tapY() - (ys[i] + 3);
+        if (fabsf(dx) <= ws[i] * 0.5f + 8.0f && fabsf(dy) <= 14.0f) {
+            lastTapped = i;
+            act(i);
+            return;
+        }
     }
 }
 
@@ -641,6 +822,12 @@ void GamePet::render()
              (int)(S.ageSec / 3600) % 100, (int)(S.ageSec / 60) % 60);
     gfx::textCentered(head, HEAD_Y, COL_ACCENT, 1);
     gfx::fillRect(RULE_X0, RULE1_Y, RULE_X1 - RULE_X0, 1, COL_RULE);
+
+    if (mode == MODE_SHAKE) {
+        renderShakeGame();
+        setDirty(0, SCR_H - 1);
+        return;
+    }
 
     drawMeter("HUNGER", S.hunger,      METER_COL_A, METER_ROW0);
     drawMeter("ENERGY", S.energy,      METER_COL_B, METER_ROW0);
@@ -667,4 +854,34 @@ void GamePet::render()
     gfx::fillRect(RULE_X0, RULE2_Y, RULE_X1 - RULE_X0, 1, COL_RULE);
     drawMenu();
     setDirty(0, SCR_H - 1);
+}
+
+void GamePet::renderShakeGame()
+{
+    // The meters give way to the game: what matters while it runs is how much dirt is
+    // left and what to do about it.
+    char line[32];
+    snprintf(line, sizeof(line), "SHAKE  %u LEFT", (unsigned)dirt);
+    gfx::textCentered(line, METER_ROW0, dirt ? COL_ACCENT : COL_TEXT, 1);
+    gfx::textCentered("hold the badge and shake it", METER_ROW1 + 4, COL_DIM, 1);
+
+    // A health-style bar showing progress, reusing the same idiom as the meters.
+    {
+        const int done = 5 - (int)dirt;
+        char bar[32];
+        int k = snprintf(bar, sizeof(bar), "DIRT   [");
+        for (int i = 0; i < BAR_CHARS; i++) bar[k++] = (i < done) ? '#' : '.';
+        bar[k++] = ']';
+        bar[k] = 0;
+        const int w = gfx::textWidth(bar, 1);
+        gfx::text(bar, (int)(SCR_CX - w * 0.5f), HEALTH_Y, COL_ACCENT, 1);
+    }
+
+    drawDirt();
+    drawFace();
+
+    if (thought[0]) {
+        gfx::textCentered(thought, THOUGHT_Y, COL_TEXT, 1);
+    }
+    gfx::textCentered("tap to stop", SCR_H - 30, COL_DIM, 1);
 }
