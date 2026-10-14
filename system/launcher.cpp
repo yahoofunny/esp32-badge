@@ -1,12 +1,10 @@
 #include "launcher.h"
 
 #include <math.h>
-#include <stdio.h>
 #include <string.h>
 
 #include "gfx.h"
 #include "input.h"
-#include "power.h"
 
 namespace launcher {
 
@@ -227,37 +225,6 @@ static void drawIconAt(int i, float scaleBoost)
     }
 }
 
-// --- the battery, top right ------------------------------------------------------
-//
-// The ring's far entry is centred at y=114 and its icon is 46 px across, so everything
-// above about y=90 is clear. This strip is where it goes: it is the one value on this
-// screen that nothing else can tell you, and the gauge behind it reads a real cell --
-// a voltage and a state of charge, not a guess from an ADC pin.
-static void drawBattery()
-{
-    const power::Reading b = power::cached();
-    const int x = 250, y = 48, w = 21, h = 11;
-    const bool low = b.valid && b.percent < 20;
-    const uint16_t ink = low ? PX(RGB565(0xE0, 0x50, 0x50))
-                             : (b.valid ? COL_LABEL : gfx::dim(COL_LABEL, 0.5f));
-
-    // Body, then the nub on its right: a battery rather than a bar, so an empty one
-    // still reads as a battery.
-    gfx::fillRect(x, y, w, 1, ink);
-    gfx::fillRect(x, y + h - 1, w, 1, ink);
-    gfx::fillRect(x, y, 1, h, ink);
-    gfx::fillRect(x + w - 1, y, 1, h, ink);
-    gfx::fillRect(x + w, y + 3, 2, h - 6, ink);
-    if (b.valid) {
-        const int filled = (w - 4) * b.percent / 100;
-        if (filled > 0) gfx::fillRect(x + 2, y + 2, filled, h - 4, ink);
-    }
-
-    char text[8];
-    if (b.valid) snprintf(text, sizeof(text), "%d%%", b.percent);
-    else         snprintf(text, sizeof(text), "--");
-    gfx::text(text, x + w + 6, y + 1, ink, 1);
-}
 
 void render()
 {
@@ -288,7 +255,6 @@ void render()
 
     // Names: the selected entry under the ring, and a hint line along the bottom.
     if (launching < 0) {
-        drawBattery();
         gfx::textCentered(g_games[selIndex()]->name(), (int)(SCR_CY + ORBIT_Y) + 34, COL_LABEL, 2);
         // Kept short on purpose. Only about 176 of the 360 px of width are visible
         // at this height, and the earlier longer wording ("tilt to browse - tap to
