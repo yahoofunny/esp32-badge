@@ -34,3 +34,6 @@ Thumbs.db
 # scratch: registry/api query dumps
 /reg*.json
 /hb.json
+
+# offline render checks
+/arc_check.png

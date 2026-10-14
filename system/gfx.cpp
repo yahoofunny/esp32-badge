@@ -231,13 +231,19 @@ void textArc(const char *s, float cx, float cy, float radius, uint16_t color, in
             const float ca = cosf(a);
             const float bx = cx + radius * sa;
             const float by = cy + radius * ca;
-            const float ux = -sa;          // towards the centre == "up" on screen
-            const float uy = -ca;
+
+            // Increasing glyph row must move AWAY from the centre, i.e. downward on
+            // screen. Using the inward direction here mirrors the glyph vertically,
+            // which is exactly what makes arc text read upside down.
+            const float ox = sa;
+            const float oy = ca;
 
             for (int gy = 0; gy < FONT_CELL; gy++) {
                 if (!(rows[gy] & (0x80 >> gx))) continue;
-                const float d = gy * scale;
-                pixel((int)lroundf(bx + ux * d), (int)lroundf(by + uy * d), color);
+                // Centre the 8-row cell on the arc rather than growing outward from
+                // it, so the line reads as sitting on the arc, not hanging off it.
+                const float d = ((float)gy - 3.5f) * scale;
+                pixel((int)lroundf(bx + ox * d), (int)lroundf(by + oy * d), color);
             }
         }
     }
