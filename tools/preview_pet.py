@@ -40,17 +40,23 @@ COL_DIM = (0x6E, 0x6E, 0x80)
 COL_RULE = (0x2A, 0x2A, 0x3A)
 COL_ACCENT = (0xD9, 0x77, 0x57)
 COL_WARN = (0xE0, 0x50, 0x50)
+COL_PANEL = (0x1A, 0x1A, 0x26)
 
 HEAD_Y = 44
 RULE1_Y = 58
 METER_COL_A, METER_COL_B = 54, 196
 METER_ROW0, METER_ROW1 = 74, 88
 HEALTH_Y = 106
-FACE_CY = 174
-THOUGHT_Y = 240
-RULE2_Y = 262
-MENU_Y0, MENU_PITCH = 278, 18
+PET_CX, PET_CY = 116, 172
+SPEECH_X0, SPEECH_X1 = 212, 352
+SPEECH_PAD = 6
+SPEECH_LINE = 11
+SPEECH_MAXLINES = 3
+MENU_R = 134.0
+MENU_SPAN = 110.0
+MENU_HIT = 24.0
 RULE_X0, RULE_X1 = 62, 298
+CHAR_W = 7
 BAR_CHARS = 8
 
 STAGE_NAMES = ["BABY", "CHILD", "TEEN", "ADULT"]
@@ -156,7 +162,7 @@ def draw_emote(px, emote, x, y):
         draw_text(px, FONT, "z", x + 8, y, COL_DIM, 1)
 
 
-def draw_pet(px, stage, mood, cx=180, cy=FACE_CY):
+def draw_pet(px, stage, mood, cx=PET_CX, cy=PET_CY):
     eyes, emote, mouth, _bob = MOODS[mood]
     sprite = SPRITES[STAGE_NAMES[stage].lower()]
     w, h, _, _, eye_dx, eye_dy, eye_r = sprite
@@ -177,7 +183,79 @@ def draw_meter(px, label, value, x, y):
     draw_text(px, FONT, line, x, y, COL_WARN if value < 30 else COL_ACCENT, 1)
 
 
-def draw_chrome(px, stage, hunger, energy, happy, clean, health, thought, name="CLAWD"):
+def menu_slot(i):
+    """Mirrors GamePet::menuSlot: angle measured from straight down."""
+    step = MENU_SPAN / (len(ACT_LABELS) - 1)
+    a = math.radians(-MENU_SPAN * 0.5 + step * i)
+    return 180 + math.sin(a) * MENU_R, 180.0 + math.cos(a) * MENU_R
+
+
+def draw_menu(px, disabled=()):
+    for i, label in enumerate(ACT_LABELS):
+        sx, sy = menu_slot(i)
+        off = i in disabled
+        stroke_circle(px, sx, sy, MENU_HIT * 0.82, COL_ACCENT, 0.45 if not off else 0.15)
+        w = text_width(FONT, label, 1)
+        draw_text(px, FONT, label, int(sx - w * 0.5), int(sy - 4),
+                  COL_DIM if off else COL_ACCENT, 1)
+
+
+def wrap_thought(text, cols, max_lines):
+    """Mirrors wrapThought: break at a space where there is one."""
+    lines, rest = [], text
+    while rest and len(lines) < max_lines:
+        rest = rest.lstrip(" ")
+        if not rest:
+            break
+        if len(rest) <= cols:
+            lines.append(rest)
+            break
+        cut = cols
+        for i in range(cols, 0, -1):
+            if i < len(rest) and rest[i] == " ":
+                cut = i
+                break
+        lines.append(rest[:cut])
+        rest = rest[cut:]
+    return lines
+
+
+def stroke_circle(px, cx, cy, r, col, amount):
+    c = tuple(int(v * amount) for v in col)
+    steps = max(24, int(r * 6))
+    for k in range(steps):
+        a = 2 * math.pi * k / steps
+        x, y = int(cx + math.cos(a) * r), int(cy + math.sin(a) * r)
+        if 0 <= x < SCR_W and 0 <= y < SCR_H:
+            px[x, y] = c
+
+
+def draw_thought(px, thought):
+    if not thought:
+        return
+    inner = SPEECH_X1 - SPEECH_X0 - 2 * SPEECH_PAD
+    lines = wrap_thought(thought, inner // CHAR_W, SPEECH_MAXLINES)
+    if not lines:
+        return
+    h = len(lines) * SPEECH_LINE + 2 * SPEECH_PAD - 3
+    y0 = PET_CY - h // 2
+    y1 = y0 + h
+    tail_top, tail_bot = PET_CY - 6, PET_CY + 6
+    for k in range(7):
+        half = 6 - k
+        fill_rect(px, SPEECH_X0 - 1 - k, PET_CY - half, 1, half * 2, COL_PANEL)
+    fill_rect(px, SPEECH_X0, y0, SPEECH_X1 - SPEECH_X0, h, COL_PANEL)
+    fill_rect(px, SPEECH_X0, y0, SPEECH_X1 - SPEECH_X0, 1, COL_RULE)
+    fill_rect(px, SPEECH_X0, y1 - 1, SPEECH_X1 - SPEECH_X0, 1, COL_RULE)
+    fill_rect(px, SPEECH_X1 - 1, y0, 1, h, COL_RULE)
+    fill_rect(px, SPEECH_X0, y0, 1, tail_top - y0, COL_RULE)
+    fill_rect(px, SPEECH_X0, tail_bot, 1, y1 - tail_bot, COL_RULE)
+    for i, line in enumerate(lines):
+        draw_text(px, FONT, line, SPEECH_X0 + SPEECH_PAD,
+                  y0 + SPEECH_PAD - 1 + i * SPEECH_LINE, COL_TEXT, 1)
+
+
+def draw_chrome(px, stage, hunger, energy, happy, clean, health, name="CLAWD"):
     head = "%s  |  %s  |  %02d:%02d" % (name, STAGE_NAMES[stage], 0, 12)
     text_centered(px, FONT, head, HEAD_Y, COL_ACCENT, 1)
     fill_rect(px, RULE_X0, RULE1_Y, RULE_X1 - RULE_X0, 1, COL_RULE)
@@ -189,19 +267,6 @@ def draw_chrome(px, stage, hunger, energy, happy, clean, health, thought, name="
         "#" if i < round(max(0.0, min(100.0, health)) / 100.0 * BAR_CHARS) else "."
         for i in range(BAR_CHARS)) + "]"
     draw_text(px, FONT, text, int(180 - text_width(FONT, text, 1) * 0.5), HEALTH_Y, COL_TEXT, 1)
-    if thought:
-        text_centered(px, FONT, thought, THOUGHT_Y, COL_TEXT, 1)
-    fill_rect(px, RULE_X0, RULE2_Y, RULE_X1 - RULE_X0, 1, COL_RULE)
-    x = 54
-    gap = 14
-    for i, label in enumerate(ACT_LABELS):
-        if i == 3:                      # the menu wraps at three per row
-            x = 54 + ((RULE_X1 - RULE_X0) - (3 * 30 + 2 * gap)) // 4
-        row, _ = divmod(i, 3)
-        draw_text(px, FONT, label, x, MENU_Y0 + row * MENU_PITCH, COL_ACCENT, 1)
-        x += text_width(FONT, label, 1) + gap
-        if i == 2:
-            x = 54 + ((RULE_X1 - RULE_X0) - (3 * 30 + 2 * gap)) // 4
 
 
 def screen(args):
@@ -216,13 +281,17 @@ def screen(args):
         rx, ry = sprite[0] * 0.30 + 14, sprite[1] * 0.30 + 14
         for i in range(5):
             ang = -math.pi * 0.5 + i * (2 * math.pi / 5)
-            fill_circle(px, 180 + math.cos(ang) * rx, FACE_CY + math.sin(ang) * ry + 4, 5, COL_DIM)
+            fill_circle(px, PET_CX + math.cos(ang) * rx, PET_CY + math.sin(ang) * ry + 4,
+                        5, COL_DIM)
         draw_pet(px, args.stage, args.anim)
-        text_centered(px, FONT, "tap to stop", SCR_H - 30, COL_DIM, 1)
+        draw_thought(px, args.thought)
+        text_centered(px, FONT, "tap to stop", SCR_H - 22, COL_DIM, 1)
     else:
         draw_chrome(px, args.stage, args.hunger, args.energy, args.happy,
-                    args.clean, args.health, args.thought)
+                    args.clean, args.health)
         draw_pet(px, args.stage, args.anim)
+        draw_thought(px, args.thought)
+        draw_menu(px)
     apply_bezel(img)
     finish(img, args.out, 2)
 
@@ -242,9 +311,9 @@ def sheet(args):
         draw_text(px, FONT, STAGE_NAMES[stage], 8, y0 + ch // 2 - 4, COL_ACCENT, 1)
         for c, mood in enumerate(ANIM_NAMES):
             sub = Image.new("RGB", (SCR_W, SCR_H), COL_BG)
-            draw_chrome(sub.load(), stage, 80, 80, 80, 80, 80, "")
+            draw_chrome(sub.load(), stage, 80, 80, 80, 80, 80)
             draw_pet(sub.load(), stage, mood)
-            img.paste(sub.crop((0, FACE_CY - ch // 2, cw, FACE_CY + ch // 2)), (c * cw, y0))
+            img.paste(sub.crop((0, PET_CY - ch // 2, cw, PET_CY + ch // 2)), (c * cw, y0))
         img.paste(Image.new("RGB", (cols * cw, 1), (0x30, 0x30, 0x40)), (0, y0 + ch - 1))
     finish(img, args.out, 1)
 

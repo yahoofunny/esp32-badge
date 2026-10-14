@@ -40,23 +40,31 @@ def main() -> int:
         return int(m.group(1)) if m else None
 
     def pair(text, a, b):
-        found = re.search(rf"{a}\s*=\s*(\d+),\s*{b}\s*=\s*(\d+)", text)
-        if found:
-            return int(found.group(1)), int(found.group(2))
-        both = re.search(rf"{a},\s*{b}\s*=\s*(\d+),\s*(\d+)", text)
-        return (int(both.group(1)), int(both.group(2))) if both else None
+        # `A = 1, B = 2`, or `A, B = 1, 2`, or two declarations on separate lines --
+        # the firmware and the preview do not have to be written the same way, and
+        # insisting they are is how this check starts failing for the wrong reason.
+        for pattern in (rf"{a}\s*=\s*(\d+),\s*{b}\s*=\s*(\d+)",
+                        rf"{a},\s*{b}\s*=\s*(\d+),\s*(\d+)"):
+            found = re.search(pattern, text)
+            if found:
+                return int(found.group(1)), int(found.group(2))
+        ma = re.search(rf"(?<![\w]){a}\s*=\s*(\d+)", text)
+        mb = re.search(rf"(?<![\w]){b}\s*=\s*(\d+)", text)
+        return (int(ma.group(1)), int(mb.group(1))) if ma and mb else None
 
     # --- layout: every coordinate the two draw at ---------------------------------
-    for key in ["HEAD_Y", "RULE1_Y", "HEALTH_Y", "FACE_CY", "THOUGHT_Y", "RULE2_Y",
-                "BAR_CHARS"]:
+    for key in ["HEAD_Y", "RULE1_Y", "HEALTH_Y", "SPEECH_PAD", "SPEECH_LINE",
+                "SPEECH_MAXLINES", "BAR_CHARS"]:
         check(key, scalar(cpp, key), scalar(preview, key))
 
     for a, b in [("METER_COL_A", "METER_COL_B"), ("METER_ROW0", "METER_ROW1"),
-                 ("MENU_Y0", "MENU_PITCH"), ("RULE_X0", "RULE_X1")]:
+                 ("RULE_X0", "RULE_X1"), ("PET_CX", "PET_CY"),
+                 ("SPEECH_X0", "SPEECH_X1")]:
         check(f"{a}/{b}", pair(cpp, a, b), pair(preview, a, b))
 
     # --- colours ------------------------------------------------------------------
-    for key in ["COL_BG", "COL_TEXT", "COL_DIM", "COL_RULE", "COL_ACCENT", "COL_WARN"]:
+    for key in ["COL_BG", "COL_TEXT", "COL_DIM", "COL_RULE", "COL_ACCENT", "COL_WARN",
+                "COL_PANEL"]:
         m = re.search(rf"{key}\s*=\s*PX\(RGB565\((0x[0-9A-Fa-f]+), (0x[0-9A-Fa-f]+), "
                       rf"(0x[0-9A-Fa-f]+)\)\)", cpp)
         n = re.search(rf"^{key}\s*=\s*\((0x[0-9A-Fa-f]+), (0x[0-9A-Fa-f]+), "
@@ -97,6 +105,12 @@ def main() -> int:
     # The icon's proportions are not checked here: preview_pet.py parses them out of
     # GamePet::drawIcon, so there is no second copy to drift.
 
+    # The arc menu's geometry: a float, so not in the scalar list above.
+    for key in ["MENU_R", "MENU_SPAN", "MENU_HIT"]:
+        m = re.search(rf"{key}\s*=\s*([0-9.]+)f", cpp)
+        n = re.search(rf"^{key}\s*=\s*([0-9.]+)$", preview, re.M)
+        check(key, m and float(m.group(1)), n and float(n.group(1)))
+
     # --- and the stage names ------------------------------------------------------
     check("STAGE_NAMES",
           re.findall(r'"(\w+)"', re.search(r"STAGE_NAMES\[4\] = \{(.*?)\}", cpp).group(1)),
@@ -106,7 +120,7 @@ def main() -> int:
         print("preview has drifted from the firmware:")
         print("\n".join(bad))
         return 1
-    print(f"preview matches the firmware on {7 + 4 + 6 + len(MOODS) + 2} mirrored values")
+    print(f"preview matches the firmware on {7 + 6 + 3 + 7 + len(MOODS) + 2} mirrored values")
     return 0
 
 

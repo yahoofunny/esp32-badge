@@ -33,9 +33,9 @@ except ImportError:
     sys.exit("Pillow is required: pip install Pillow")
 
 
-# Widths chosen so each stage is a clear step up from the last while still
-# leaving room for the meter panel and the menu on a 360 px screen.
-DEFAULT_SIZES = ["96x64", "120x80", "144x96", "168x112"]
+# Widths chosen so each stage is a clear step up from the last, and so the adult
+# still leaves the right-hand third of the screen free for the pet's speech.
+DEFAULT_SIZES = ["88x59", "108x72", "128x86", "148x99"]
 STAGE_NAMES = ["baby", "child", "teen", "adult"]
 DEFAULT_SOURCE = "system/clawd-source.png"
 DEFAULT_OUTPUT = "system/assets_pet.h"

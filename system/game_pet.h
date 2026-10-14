@@ -137,7 +137,11 @@ private:
     void drawPet();
     void drawDirt();
     void drawMenu();
-    void layoutMenu(float *xs, float *ys, float *ws, bool *enabled, int *count) const;
+    void drawThought();
+    // Where a menu item sits and whether it can be used, both of which the drawing and
+    // the hit test need to agree on exactly.
+    void menuSlot(int i, float *sx, float *sy) const;
+    bool menuEnabled(int i) const;
 
     // --- interaction --------------------------------------------------------
     void handlePetTouch();          // drag / poke, on the pet itself

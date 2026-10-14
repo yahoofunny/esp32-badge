@@ -62,6 +62,7 @@ static const uint16_t COL_DIM    = PX(RGB565(0x6E, 0x6E, 0x80));
 static const uint16_t COL_RULE   = PX(RGB565(0x2A, 0x2A, 0x3A));
 static const uint16_t COL_ACCENT = PX(RGB565(0xD9, 0x77, 0x57));   // clawd's rust
 static const uint16_t COL_WARN   = PX(RGB565(0xE0, 0x50, 0x50));
+static const uint16_t COL_PANEL  = PX(RGB565(0x1A, 0x1A, 0x26));   // the speech box
 
 // ------------------------------------------------------------------- the body ---
 // The pet is clawd himself, not a cartoon face drawn in his place.
@@ -228,12 +229,29 @@ static const int RULE1_Y = 58;
 static const int METER_COL_A = 54, METER_COL_B = 196;
 static const int METER_ROW0  = 74,  METER_ROW1 = 88;
 static const int HEALTH_Y    = 106;
-static const int FACE_CY     = 174;   // the adult body is 112 px tall, so
-                                      // this clears the health row and the thought
-static const int THOUGHT_Y   = 240;
-static const int RULE2_Y     = 262;
-static const int MENU_Y0     = 278, MENU_PITCH = 18;
-static const int RULE_X0 = 62, RULE_X1 = 298;
+
+// The pet sits left of centre, which is what frees the right-hand side for its
+// speech. Under its feet the speech had the whole width but only about ten pixels of
+// height between the body and the menu, so anything longer than one line had nowhere
+// to go.
+static const int PET_CX      = 116;
+static const int PET_CY      = 172;
+static const int SPEECH_X0   = 212;
+static const int SPEECH_X1   = 352;
+static const int SPEECH_PAD  = 6;
+static const int SPEECH_LINE = 11;    // 8 px glyphs plus leading
+static const int SPEECH_MAXLINES = 3;
+
+// The menu follows the bezel: six items on an arc across the bottom. Two rows of
+// three put the entries about 30 px apart with 8 px of glyph to hit, which is not a
+// target a finger can find. On an arc at this radius they are 51 px apart, each with
+// a 24 px grab radius of its own, and the arc stops short of the pet.
+static const float MENU_R    = 134.0f;
+static const float MENU_SPAN = 110.0f;    // degrees of arc, centred on straight down
+static const float MENU_HIT  = 24.0f;
+
+static const int RULE_X0 = 62, RULE_X1 = 298;   // the header rule's span
+static const int CHAR_W  = 7;                   // the font's advance at scale 1
 static const int BAR_CHARS = 8;       // '#' filled, '.' empty
 
 static const char *const ACT_LABEL[ACT_COUNT] = { "FEED", "PLAY", "PET", "SLEEP", "SCRUB", "NAME" };
@@ -490,6 +508,66 @@ void GamePet::drawIcon(float cx, float cy, float size) const
     gfx::drawSpriteSized(icon_pet, cx, cy, 0.0f, size, icon_pet_palette);
 }
 
+// Splits the thought to fit the speech box. The font is fixed-width, so counting
+// characters is exact. Breaks at a space where there is one and mid-word where a
+// single word is longer than the line.
+static int wrapThought(const char *s, char out[][24], int maxLines, int cols)
+{
+    if (cols < 4) cols = 4;
+    int n = 0;
+    while (*s && n < maxLines) {
+        while (*s == ' ') s++;
+        const int len = (int)strlen(s);
+        if (len == 0) break;
+        if (len <= cols) {
+            snprintf(out[n], 24, "%s", s);
+            return n + 1;
+        }
+        int cut = cols;
+        for (int i = cols; i > 0; i--) {
+            if (s[i] == ' ') { cut = i; break; }
+        }
+        memcpy(out[n], s, (size_t)cut);
+        out[n][cut] = 0;
+        n++;
+        s += cut;
+    }
+    return n;
+}
+
+void GamePet::drawThought()
+{
+    if (!thought[0]) return;
+
+    char lines[SPEECH_MAXLINES][24];
+    const int inner = SPEECH_X1 - SPEECH_X0 - 2 * SPEECH_PAD;
+    const int n = wrapThought(thought, lines, SPEECH_MAXLINES, inner / CHAR_W);
+    if (n <= 0) return;
+
+    const int h = n * SPEECH_LINE + 2 * SPEECH_PAD - 3;
+    const int y0 = PET_CY - h / 2;
+    const int y1 = y0 + h;
+    const int tailTop = PET_CY - 6, tailBot = PET_CY + 6;
+
+    // The tail first, then the box over its inner end, then the left edge only above
+    // and below the tail, so the outline opens into the pointer instead of crossing it.
+    for (int k = 0; k < 7; k++) {
+        const int half = 6 - k;
+        gfx::fillRect(SPEECH_X0 - 1 - k, PET_CY - half, 1, half * 2, COL_PANEL);
+    }
+    gfx::fillRect(SPEECH_X0, y0, SPEECH_X1 - SPEECH_X0, h, COL_PANEL);
+    gfx::fillRect(SPEECH_X0, y0, SPEECH_X1 - SPEECH_X0, 1, COL_RULE);
+    gfx::fillRect(SPEECH_X0, y1 - 1, SPEECH_X1 - SPEECH_X0, 1, COL_RULE);
+    gfx::fillRect(SPEECH_X1 - 1, y0, 1, h, COL_RULE);
+    gfx::fillRect(SPEECH_X0, y0, 1, tailTop - y0, COL_RULE);
+    gfx::fillRect(SPEECH_X0, tailBot, 1, y1 - tailBot, COL_RULE);
+
+    for (int i = 0; i < n; i++) {
+        gfx::text(lines[i], SPEECH_X0 + SPEECH_PAD, y0 + SPEECH_PAD - 1 + i * SPEECH_LINE,
+                  COL_TEXT, 1);
+    }
+}
+
 void GamePet::drawMeter(const char *label, float value, int x, int y)
 {
     char line[32];
@@ -631,50 +709,40 @@ void GamePet::updateShakeGame(float dt)
     }
 }
 
-void GamePet::layoutMenu(float *xs, float *ys, float *ws, bool *enabled, int *count) const
+void GamePet::menuSlot(int i, float *sx, float *sy) const
 {
-    const int perRow = 3;
-    const float gap = 16.0f;
-    for (int i = 0; i < ACT_COUNT; i++) {
-        const int row = i / perRow;
-        const int first = row * perRow;
-        const int last = (first + perRow > ACT_COUNT) ? ACT_COUNT : first + perRow;
+    // Angle measured from straight down, so the arc is symmetric about it and the
+    // items run left to right in menu order.
+    const float step = MENU_SPAN / (float)(ACT_COUNT - 1);
+    const float a = (-MENU_SPAN * 0.5f + step * (float)i) * PI_F / 180.0f;
+    *sx = SCR_CX + sinf(a) * MENU_R;
+    *sy = SCR_CY + cosf(a) * MENU_R;
+}
 
-        float total = 0.0f;
-        for (int j = first; j < last; j++) total += gfx::textWidth(ACT_LABEL[j], 1) + gap;
-        total -= gap;
-
-        float x = SCR_CX - total * 0.5f;
-        for (int j = first; j < last; j++) {
-            const int w = gfx::textWidth(ACT_LABEL[j], 1);
-            if (j == i) {
-                xs[i] = x;
-                ws[i] = (float)w;
-                ys[i] = MENU_Y0 + row * MENU_PITCH;
-            }
-            x += w + gap;
-        }
-        // Sleeping blocks everything except waking and renaming; dim the rest so the
-        // state is visible rather than only enforced.
-        enabled[i] = !has(PF_ASLEEP) || i == ACT_SLEEP || i == ACT_NAME;
-    }
-    *count = ACT_COUNT;
+bool GamePet::menuEnabled(int i) const
+{
+    // Sleeping blocks everything except waking and renaming.
+    return !has(PF_ASLEEP) || i == ACT_SLEEP || i == ACT_NAME;
 }
 
 void GamePet::drawMenu()
 {
-    float xs[ACT_COUNT], ys[ACT_COUNT], ws[ACT_COUNT];
-    bool en[ACT_COUNT];
-    int n = 0;
-    layoutMenu(xs, ys, ws, en, &n);
+    for (int i = 0; i < ACT_COUNT; i++) {
+        float sx, sy;
+        menuSlot(i, &sx, &sy);
+        const int w = gfx::textWidth(ACT_LABEL[i], 1);
+        const int x = (int)(sx - w * 0.5f);
+        const int y = (int)(sy - 4.0f);
 
-    for (int i = 0; i < n; i++) {
+        // A faint disc marks the grab area, so the target is visible as well as
+        // bigger than the word in it.
+        gfx::strokeCircle(sx, sy, MENU_HIT * 0.82f, 1.0f,
+                          gfx::dim(COL_ACCENT, menuEnabled(i) ? 0.45f : 0.15f));
         if (i == lastTapped) {
-            gfx::fillRect((int)xs[i] - 4, (int)ys[i] - 3, (int)ws[i] + 8, 14,
-                          gfx::dim(COL_ACCENT, 0.65f));
+            gfx::fillCircle(sx, sy, MENU_HIT * 0.82f, gfx::dim(COL_ACCENT, 0.55f));
         }
-        gfx::text(ACT_LABEL[i], (int)xs[i], (int)ys[i],
-                  en[i] ? (i == lastTapped ? COL_TEXT : COL_ACCENT) : COL_DIM, 1);
+        gfx::text(ACT_LABEL[i], x, y,
+                  menuEnabled(i) ? (i == lastTapped ? COL_TEXT : COL_ACCENT) : COL_DIM, 1);
     }
 }
 
@@ -784,12 +852,12 @@ void GamePet::update(float dt)
             dragging = true;
         }
         if (dragging) {
-            petX = clampf((float)input::tapX(), 64.0f, 296.0f);
-            petY = clampf((float)input::tapY(), 96.0f, 244.0f);
+            petX = clampf((float)input::tapX(), 52.0f, 232.0f);
+            petY = clampf((float)input::tapY(), 110.0f, 236.0f);
         } else {
             // Drifts back to its resting place.
-            petX += (SCR_CX - petX) * fminf(1.0f, 2.5f * dt);
-            petY += ((float)FACE_CY - petY) * fminf(1.0f, 2.5f * dt);
+            petX += ((float)PET_CX - petX) * fminf(1.0f, 2.5f * dt);
+            petY += ((float)PET_CY - petY) * fminf(1.0f, 2.5f * dt);
         }
 
         if (input::tapped()) {
@@ -844,21 +912,22 @@ void GamePet::handlePetTouch()
 
 void GamePet::handleMenuTouch()
 {
-    float xs[ACT_COUNT], ys[ACT_COUNT], ws[ACT_COUNT];
-    bool en[ACT_COUNT];
-    int n = 0;
-    layoutMenu(xs, ys, ws, en, &n);
-    for (int i = 0; i < n; i++) {
-        // Generous vertically and a few pixels wide: these are words rather than
-        // tiles, and a finger is not a pointer. Touch accuracy is worst at the bottom
-        // of a panel, which is where this menu sits.
-        const float dx = input::tapX() - (xs[i] + ws[i] * 0.5f);
-        const float dy = input::tapY() - (ys[i] + 3);
-        if (fabsf(dx) <= ws[i] * 0.5f + 8.0f && fabsf(dy) <= 14.0f) {
-            lastTapped = i;
-            act(i);
-            return;
-        }
+    // Nearest slot wins if the touch is inside any grab radius, rather than the first
+    // one that matches: on an arc the ends are closer to their neighbours' labels than
+    // they are to their own centre, and taking the nearest is what the finger meant.
+    int best = -1;
+    float bestD2 = MENU_HIT * MENU_HIT;
+    for (int i = 0; i < ACT_COUNT; i++) {
+        float sx, sy;
+        menuSlot(i, &sx, &sy);
+        const float dx = (float)input::tapX() - sx;
+        const float dy = (float)input::tapY() - sy;
+        const float d2 = dx * dx + dy * dy;
+        if (d2 <= bestD2) { best = i; bestD2 = d2; }
+    }
+    if (best >= 0 && menuEnabled(best)) {
+        lastTapped = best;
+        act(best);
     }
 }
 
@@ -895,12 +964,7 @@ void GamePet::render()
     }
 
     drawPet();
-
-    if (thought[0]) {
-        gfx::textCentered(thought, THOUGHT_Y, COL_TEXT, 1);
-    }
-
-    gfx::fillRect(RULE_X0, RULE2_Y, RULE_X1 - RULE_X0, 1, COL_RULE);
+    drawThought();
     drawMenu();
     setDirty(0, SCR_H - 1);
 }
@@ -928,9 +992,6 @@ void GamePet::renderShakeGame()
 
     drawDirt();
     drawPet();
-
-    if (thought[0]) {
-        gfx::textCentered(thought, THOUGHT_Y, COL_TEXT, 1);
-    }
-    gfx::textCentered("tap to stop", SCR_H - 30, COL_DIM, 1);
+    drawThought();
+    gfx::textCentered("tap to stop", SCR_H - 22, COL_DIM, 1);
 }
