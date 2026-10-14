@@ -42,10 +42,18 @@ else
     CLI="$(command -v arduino-cli)"
 fi
 
-# Locate the sketchbook (where arduino-cli looks for installed libraries).
+# Locate the sketchbook (where arduino-cli looks for installed libraries). The
+# repo's own shared libraries under lib/ are added alongside it, so sketches can
+# use them without anything being installed into the sketchbook first.
+#
+# The path must be in Windows form: arduino-cli is a native binary and does not
+# resolve the /c/... paths Git Bash hands out, at least not inside a
+# comma-separated --libraries list.
 if [ -z "${SKETCHBOOK:-}" ]; then
     SKETCHBOOK="$("$CLI" config get directories.user | tr -d '\r')"
 fi
+ROOT_WIN="$(cygpath -w "$ROOT" 2>/dev/null || echo "$ROOT")"
+LIB_PATH="$SKETCHBOOK/libraries,$ROOT_WIN\\lib"
 
 PORT="${PORT:-COM3}"
 
@@ -68,11 +76,11 @@ SKETCH="$2"
 SKETCH_NAME="$(basename "$SKETCH")"
 BUILD_DIR="$ROOT/build/$SKETCH_NAME"
 
-COMPILE_ARGS=(--fqbn "$FQBN" --libraries "$SKETCHBOOK/libraries" --warnings none
+COMPILE_ARGS=(--fqbn "$FQBN" --libraries "$LIB_PATH" --warnings none
               --build-path "$BUILD_DIR")
 
 echo "arduino-cli : $CLI"
-echo "libraries   : $SKETCHBOOK/libraries"
+echo "libraries   : $LIB_PATH"
 echo "partition   : $PARTITION_SCHEME"
 echo "build dir   : $BUILD_DIR"
 echo ""

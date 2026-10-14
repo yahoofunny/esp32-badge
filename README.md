@@ -31,18 +31,28 @@ The USB-C port is wired straight to the chip's native USB-Serial/JTAG
 
 ```
 esp32-badge/
+├── system/                    the firmware that runs on the badge (launcher + games)
+├── games/clawd-roll/          the same game as a standalone sketch, no launcher
+├── lib/
+│   └── board_drivers/         shared Arduino library: ST77916 panel, CST816 touch, I2C
 ├── docs/
 │   └── hardware.md            pin map, free GPIOs, expansion notes
 ├── tools/
 │   ├── build.sh               compile / flash helper (arduino-cli)
-│   ├── restore_stock.sh       restore factory firmware
+│   ├── deploy_game.sh         build a sketch, write it into ota_0, boot it
+│   ├── switch_slot.py         choose which slot the bootloader starts
+│   ├── restore_stock.sh       restore the factory firmware
+│   ├── serial_monitor.py      non-intrusive monitor (never touches DTR/RTS)
+│   ├── convert_sprite.py      flat-colour art -> 2bpp indexed C header
+│   ├── make_font.py           bake an 8x8 ASCII bitmap font
+│   ├── make_icon.py           render the project icon
 │   ├── idf_install_steps.bat  install ESP-IDF toolchain (Git Bash friendly)
 │   └── idf_env.bat            activate ESP-IDF env and run a command
 └── README.md
 ```
 
-`arduino-cli`, the upstream Waveshare repo, ESP-IDF and flash backups are all
-gitignored — follow the setup below to recreate them locally.
+`arduino-cli`, the upstream Waveshare repo, ESP-IDF, build output and flash backups
+are all gitignored — follow the setup below to recreate them locally.
 
 ## Setup
 
@@ -106,6 +116,58 @@ Board options are baked into `build.sh`. The non-default ones matter:
 | `FlashMode` | `qio` | QIO 80MHz |
 | `PartitionScheme` | `app3M_fat9M_16MB` | 3MB app + 9.9MB FATFS for assets |
 
+## The system
+
+The firmware that occupies `ota_0` is the project's own little system: it boots into
+a launcher ring of games, and each game is an independent module behind the `Game`
+interface. Adding one means writing a class and appending a pointer to `GAMES` in
+`system/system.ino`.
+
+```
+system/
+├── system.ino            setup/loop, screen dispatch, the game registry
+├── gfx.{h,cpp}           framebuffer primitives, rotated 2bpp sprites, 8x8 text
+├── input.{h,cpp}         tilt (with auto-trim), touch, BOOT button
+├── arena.{h,cpp}         the shared backdrop: wall ring, floor dots
+├── launcher.{h,cpp}      the carousel home screen
+├── game.h                the Game interface
+├── game_clawd.{h,cpp}    tilt-controlled rolling clawd
+├── game_tap.{h,cpp}      touch-controlled clawd tap
+├── clawd_sprite.h        the sprite + palette, shared by both games
+├── assets_clawd.h        generated 2bpp sprite
+├── assets_font.h         generated 8x8 ASCII font
+└── partitions.csv        must match the stock layout — see Coexistence below
+```
+
+**Controls.** Tilt the board left or right to step the carousel — one lean moves one
+place and then latches until the board is level again, so a held tilt does not
+free-run through the list. Tap an icon to play it, or tap the middle to play the
+selected one. Hold BOOT for a moment to come back from a game to the launcher; hold
+it longer *on* the launcher to hand the board back to the stock system. A ring in the
+bottom corner fills while you hold, so the gesture is discoverable.
+
+```bash
+./tools/deploy_game.sh system          # compile, flash into ota_0, boot it
+./tools/deploy_game.sh games/clawd-roll   # or deploy the standalone game sketch
+python tools/make_font.py              # regenerate the bitmap font
+python tools/make_icon.py              # regenerate the project icon
+```
+
+Rendering bypasses LVGL completely: the firmware owns one 360×360 RGB565 framebuffer
+in PSRAM and pushes bands of it to the panel. That keeps the frame loop cheap and
+sidesteps the LVGL 8.x/9.x split between the two example trees. Each screen reports
+which rows it changed (`Game::dirtyY0/dirtyY1`) so a game that moves one sprite does
+not pay for a full-screen transfer every frame.
+
+**Tilt input.** The axis perpendicular to the screen is found at boot (it is the one
+carrying gravity while the board lies flat), so only the in-plane mapping is
+hard-coded. There is deliberately *no* zeroing calibration: with gravity-sensed tilt,
+level *is* zero, and subtracting a boot-time snapshot only bakes in whatever angle
+the board happened to be held at — worse, the constant residual that leaves behind
+pins a ball against a wall. Instead a slow auto-trim removes the accelerometer's
+static offset, but only while the board is near level, so it never fights a player
+who is deliberately leaning in.
+
 ## Games
 
 ### clawd-roll
@@ -115,37 +177,23 @@ Board options are baked into `build.sh`. The non-default ones matter:
 Tilt the board and clawd rolls; let up and it coasts; hit the arena wall and it
 bounces. No score, no goal — it is a thing that feels good to wobble.
 
-```
-games/clawd-roll/
-├── clawd-roll.ino        the game: physics, tilt input, direct framebuffer rendering
-├── clawd-source.png      source art (flat orange mascot, transparent background)
-├── clawd_asset.h         generated: 2bpp indexed sprite, 378x253 in 23 KB
-├── icon.png / icon-256.png
-├── partitions.csv        must match the stock layout — see Coexistence below
-└── Display_ST77916.*, esp_lcd_st77916.*, I2C_Driver.*, Touch_CST816.*
-                          board driver copies (see the note in Display_ST77916.cpp)
-```
+Also buildable as a standalone single-game firmware, which is useful when you want to
+iterate on the physics without the launcher in the way:
 
 ```bash
-./tools/deploy_game.sh                 # compile, flash into ota_0, boot it
-python tools/make_icon.py              # regenerate the icon
+./tools/deploy_game.sh games/clawd-roll
 python tools/convert_sprite.py games/clawd-roll/clawd-source.png \
        games/clawd-roll/clawd_asset.h --name clawd --body E83B3B
 ```
 
-Rendering bypasses LVGL completely: the sketch owns a 360×360 RGB565 framebuffer in
-PSRAM and draws into it directly, which keeps the frame loop cheap and sidesteps the
-LVGL 8.x/9.x split between the two example trees.
+### clawd-tap
 
-**Tilt input.** The axis perpendicular to the screen is found at boot (it is the one
-carrying gravity while the board lies flat), so only the in-plane mapping is
-hard-coded. There is deliberately *no* zeroing calibration: with gravity-sensed tilt,
-level *is* zero, and subtracting a boot-time snapshot only bakes in whatever angle
-the board happened to be held at. Instead a slow auto-trim removes the
-accelerometer's static offset, but only while the board is near level — lean into a
-tilt and the trim gate closes so it never fights the player.
+Touch counterpart: clawd pops up somewhere in the arena, waits a shrinking moment,
+and vanishes. Tap it to score, three time-outs and it is over. It exists as much to
+exercise the game interface as to be played — between it and clawd-roll both input
+paths and both ends of the drawing cost are covered.
 
-## Coexistence: the game and the stock system
+## Coexistence: the system and the stock system
 
 The two firmwares live in different partition slots and neither is overwritten:
 
@@ -220,6 +268,25 @@ Then restore any time with:
 ```
 
 ## Gotchas worth knowing
+
+**The touch controller stops answering I2C when it is idle.** `Touch_Init()` leaves
+the CST816S in auto-sleep, and a sleeping controller does not respond on the bus — so
+code that polls it every frame produces a continuous stream of
+`i2c.master: I2C transaction unexpected nack detected` until the screen is touched.
+The vendor function that is supposed to control this cannot:
+
+```c
+void CST816_AutoSleep(bool Sleep_State) {
+  ...
+  uint8_t Sleep_State_Set = (uint8_t)(!Sleep_State);
+  Sleep_State_Set = 10;                              // overwrites the computed value
+  I2C_Write_Touch(CST816_ADDR, CST816_REG_DisAutoSleep, &Sleep_State_Set, 1);
+}
+```
+
+The register needs `0x01` to disable auto-sleep; it always receives `10`. The
+library's `Touch_SetAutoSleep(false)` writes the correct value without the controller
+reset that the vendor function also performs, and `input::init()` calls it.
 
 **The native USB port can strand the chip in download mode.** The USB-C connector
 goes straight to the chip's USB-Serial/JTAG peripheral — there is no USB-to-UART

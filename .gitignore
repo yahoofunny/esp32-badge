@@ -30,3 +30,7 @@ Thumbs.db
 
 # Scratch area: downloaded references, contact sheets, intermediate images
 /reference/
+
+# scratch: registry/api query dumps
+/reg*.json
+/hb.json
