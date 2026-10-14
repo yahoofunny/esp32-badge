@@ -17,9 +17,11 @@
  */
 
 #include <Arduino.h>
+#include <Wire.h>
 #include <math.h>
 
 #include "Display_ST77916.h"
+#include "I2C_Driver.h"
 #include "arena.h"
 #include "clawd_sprite.h"
 #include "esp_heap_caps.h"
@@ -134,6 +136,13 @@ void setup()
     delay(150);
     Serial.println("\n[esp32-badge] booting");
 
+    // The I2C bus has to be up before LCD_Init(), because LCD_Init() calls
+    // Touch_Init(), which talks to the touch controller. Without this the controller
+    // is reset by Touch_Init() and then left unaddressed.
+    I2C_Init();
+    Wire.setClock(400000);
+    Serial.println("[sys] i2c bus up");
+
     randomSeed(esp_random());
 
     fb = (uint16_t *)heap_caps_malloc((size_t)SCR_W * SCR_H * 2, MALLOC_CAP_SPIRAM);
@@ -141,19 +150,26 @@ void setup()
         Serial.println("[esp32-badge] FATAL: framebuffer allocation failed");
         while (1) delay(1000);
     }
-    Serial.printf("[esp32-badge] framebuffer at %p (%d bytes, PSRAM)\n",
-                  fb, SCR_W * SCR_H * 2);
+    Serial.printf("[sys] framebuffer at %p (%d bytes, PSRAM)\n", fb, SCR_W * SCR_H * 2);
 
     Backlight_Init();
+    Serial.println("[sys] backlight init done");
+
     LCD_Init();
+    Serial.println("[sys] LCD_Init done");
+
     Set_Backlight(85);
+    Serial.printf("[sys] backlight set to %d\n", LCD_Backlight);
 
     input::init();
+    Serial.println("[sys] input ready");
+
     launcher::begin(GAMES, GAME_COUNT);
 
     showSplash();
+    Serial.println("[sys] splash pushed");
 
-    Serial.printf("[esp32-badge] %d game(s) registered; launcher ready\n", GAME_COUNT);
+    Serial.printf("[esp32-badge] %d screen(s) registered; launcher ready\n", GAME_COUNT);
 }
 
 void loop()

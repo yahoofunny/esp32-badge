@@ -2,9 +2,9 @@
 # Build the game, drop it into the idle ota_0 slot, and boot it.
 #
 # The stock system in the `factory` partition is never touched: only the app region
-# at 0x6c0000 and the 8 KB otadata selector are written. That makes this about 5 s
+# at 0x20000 and the 8 KB otadata selector are written. That makes this about 5 s
 # instead of the ~70 s a full reflash costs, and means a broken build can always be
-# escaped from with `tools/switch_slot.py stock`.
+# escaped from with `tools/switch_slot.py home` (or `stock` for the stock system).
 #
 # Usage:  ./tools/deploy_game.sh [sketch-dir] [port]
 #         (default sketch: games/clawd-roll, default port: COM3)
@@ -18,7 +18,7 @@ PORT="${2:-${PORT:-COM3}}"
 SKETCH_NAME="$(basename "$SKETCH")"
 APP="$ROOT/build/$SKETCH_NAME/$SKETCH_NAME.ino.bin"
 
-OTA0_OFFSET=0x6c0000
+APP_OFFSET=0x20000          # the factory partition: our sketches live here
 
 if [ -n "${ESPTOOL:-}" ]; then
     :
@@ -45,16 +45,16 @@ if [ ! -f "$APP" ]; then
 fi
 
 echo ""
-echo "=== 2/3 flash app into ota_0 at $OTA0_OFFSET ==="
+echo "=== 2/3 flash app into the factory slot at $APP_OFFSET ==="
 ls -lh "$APP"
 "$ESPTOOL" --chip esp32s3 --port "$PORT" --baud 921600 \
     --after no_reset --connect-attempts 1 \
     write_flash --flash_mode keep --flash_size keep --flash_freq keep \
-    "$OTA0_OFFSET" "$APP"
+    "$APP_OFFSET" "$APP"
 
 echo ""
 echo "=== 3/3 select ota_0 and boot ==="
-"$PYTHON" "$ROOT/tools/switch_slot.py" game "$PORT"
+"$PYTHON" "$ROOT/tools/switch_slot.py" home "$PORT"
 
 echo ""
 echo "Deployed. Attach a monitor with:"
