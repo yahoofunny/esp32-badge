@@ -16,7 +16,11 @@
 // --------------------------------------------------------------- constants ---
 // Straight from the original: same thresholds, same rates, so the ported pet ages
 // and suffers at the same pace as the one on the blog.
-static const float HATCH_MIN = 3.0f;
+//
+// One deliberate departure: there is no egg stage. The original starts with a
+// three-minute wait before anything can be done, which reads as a dead screen on a
+// badge -- and the wait only ever happens once, so it is not really a mechanic.
+// A new pet is born directly at the baby stage.
 static const float TEEN_MIN  = 60.0f;
 static const float ADULT_MIN = 360.0f;
 
@@ -122,7 +126,6 @@ void GamePet::say(const char *fmt, ...)
 int GamePet::stageForAge() const
 {
     const float m = ageMin();
-    if (m < HATCH_MIN) return 0;
     if (m < TEEN_MIN)  return 1;
     if (m < ADULT_MIN) return 2;
     return 3;
@@ -164,18 +167,23 @@ void GamePet::load()
             // nonsense needs.
             if (S.stage > 3 || S.hunger > 200.0f || S.clean > 200.0f ||
                 S.fun > 200.0f || S.energy > 200.0f) {
-                Serial.println("[pet] save looked corrupt; starting a new egg");
-                resetToNewEgg();
+                Serial.println("[pet] save looked corrupt; starting a new clawd");
+                resetToNewPet();
             } else {
-                Serial.printf("[pet] restored: stage=%u ageMin=%.1f\n", S.stage, ageMin());
+                // Saves written before the egg stage was removed carry stage 0. Promote them
+                // silently rather than letting checkGrow() announce that an egg grew
+                // into a baby.
+                if (S.stage == 0) S.stage = 1;
+                Serial.printf("[pet] restored: stage=%u age=%.1f min hunger=%.0f\n",
+                              S.stage, ageMin(), S.hunger);
                 return;
             }
         } else {
             prefs.end();
         }
     }
-    resetToNewEgg();
-    Serial.println("[pet] no save found; a new egg was laid");
+    resetToNewPet();
+    Serial.println("[pet] no save found; a new clawd was born");
 }
 
 void GamePet::save()
@@ -192,7 +200,7 @@ void GamePet::save()
     prefs.end();
 }
 
-void GamePet::resetToNewEgg()
+void GamePet::resetToNewPet()
 {
     memset(&S, 0, sizeof(S));
     S.sessionId  = petSessionId;
@@ -201,21 +209,21 @@ void GamePet::resetToNewEgg()
     S.fun    = 40.0f;
     S.clean  = 75.0f;
     S.energy = 90.0f;
-    S.stage  = 0;
+    S.stage  = 1;
     setFlag(PF_POOP, false);
     setFlag(PF_SLEEPING, false);
     setFlag(PF_SICK, false);
     setFlag(PF_RUNAWAY, false);
-    say("clawd laid an egg - %d min", (int)HATCH_MIN);
+    say("clawd was born");
     save();
-    Serial.println("[pet] new egg laid (no valid save)");
+    Serial.println("[pet] a new clawd was born (no valid save)");
 }
 
 // -------------------------------------------------------------- simulation ----
 void GamePet::decay(uint32_t sec)
 {
-    // The egg does not age internally, and a pet that has left is not simulated.
-    if (S.stage == 0 || has(PF_RUNAWAY)) return;
+    // A pet that has left is not simulated.
+    if (has(PF_RUNAWAY)) return;          // stage 0 no longer occurs; see the note above
 
     const float mins = sec / 60.0f;
     const float sickMult  = has(PF_SICK)     ? SICK_MULT  : 1.0f;
@@ -241,14 +249,6 @@ void GamePet::decay(uint32_t sec)
 
 void GamePet::checkGrow()
 {
-    if (S.stage == 0) {
-        if (ageMin() >= HATCH_MIN) {
-            S.stage = 1;
-            say("the egg cracked - clawd hatched!");
-            save();
-        }
-        return;
-    }
     const int target = stageForAge();
     if (target > S.stage) {
         // Poor care delays growing up, except that adulthood is only a matter of
@@ -314,7 +314,7 @@ void GamePet::checkRunaway()
 
 void GamePet::checkPoop(uint32_t sec)
 {
-    if (has(PF_POOP) || has(PF_SLEEPING) || S.stage == 0) return;
+    if (has(PF_POOP) || has(PF_SLEEPING)) return;
     if (S.hunger <= 45.0f) return;
     const float chance = (sec / 60.0f) * POOP_CHANCE_PER_MIN;
     if ((random(0, 10000) / 10000.0f) < chance) {
@@ -337,15 +337,9 @@ void GamePet::tick(uint32_t sec)
 void GamePet::act(int a)
 {
     if (has(PF_RUNAWAY)) {
-        if (a == ACT_FEED) {          // "re-adopt": any action starts a fresh egg
-            resetToNewEgg();
+        if (a == ACT_FEED) {          // "re-adopt": any action starts a fresh pet
+            resetToNewPet();
         }
-        return;
-    }
-
-    if (S.stage == 0) {
-        const int left = (int)ceilf(HATCH_MIN - ageMin());
-        say("still an egg - %d min to go", left > 0 ? left : 0);
         return;
     }
 
@@ -616,12 +610,12 @@ void GamePet::update(float dt)
                     act(i);
                     lastTapped = i;
                 } else if (has(PF_RUNAWAY)) {
-                    resetToNewEgg();           // the "adopt again" path
+                    resetToNewPet();           // the "adopt again" path
                 }
                 break;
             }
         }
-        if (has(PF_RUNAWAY) && lastTapped < 0) resetToNewEgg();
+        if (has(PF_RUNAWAY) && lastTapped < 0) resetToNewPet();
     }
 
     saveCounter += ms;

@@ -13,7 +13,7 @@
 //
 // The port keeps the original's two deliberate cruelties: growth can be delayed by
 // poor care (though adulthood only waits for time), and neglect is permanent — a pet
-// that runs away leaves an empty screen until you adopt a new egg.
+// that runs away leaves an empty screen until you adopt a new pet.
 class GamePet : public Game {
 public:
     const char *name() const override { return "CLAWD PET"; }
@@ -40,7 +40,7 @@ private:
         float    fun;               // 0 good .. 100 bored
         float    clean;             // 100 good .. 0 filthy
         float    energy;            // 100 good .. 0 exhausted
-        uint8_t  stage;             // 0 egg, 1 baby, 2 teen, 3 adult
+        uint8_t  stage;             // 1 baby, 2 teen, 3 adult (no egg stage)
         uint8_t  flags;             // bitfield, see PF_*
         uint32_t hungerPeakSec;     // when hunger last hit 100, 0 if it has not
         uint32_t criticalSinceSec;  // when the multi-need critical state began
@@ -82,7 +82,7 @@ private:
     const pet_sprite_t &sprite() const;
 
     // --- simulation ---------------------------------------------------------
-    void resetToNewEgg();
+    void resetToNewPet();
     void decay(uint32_t sec);
     void tick(uint32_t sec);
     void checkGrow();
