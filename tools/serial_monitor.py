@@ -72,7 +72,18 @@ def main() -> int:
     deadline = time.time() + args.seconds if args.seconds else None
     try:
         while deadline is None or time.time() < deadline:
-            data = s.read(4096)
+            try:
+                data = s.read(4096)
+            except serial.SerialException:
+                # The device went away underneath us -- typically the cable was
+                # unplugged. That is a normal end to a monitoring session, not a
+                # crash, so say so and stop rather than dumping a traceback.
+                print("\n--- device disconnected (cable unplugged?) ---")
+                try:
+                    s.close()
+                except Exception:
+                    pass
+                return 0
             if data:
                 sys.stdout.write(data.decode("utf-8", "replace"))
                 sys.stdout.flush()
@@ -80,9 +91,12 @@ def main() -> int:
         pass
     finally:
         # Leave the lines in the idle state; do not toggle anything on the way out.
-        s.dtr = False
-        s.rts = False
-        s.close()
+        try:
+            s.dtr = False
+            s.rts = False
+            s.close()
+        except Exception:
+            pass
         print("\n--- monitor closed ---")
     return 0
 
