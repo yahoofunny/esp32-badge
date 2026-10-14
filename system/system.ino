@@ -39,6 +39,7 @@
 #include "input.h"
 #include "launcher.h"
 #include "power.h"
+#include "sound.h"
 
 // ------------------------------------------------------------------- games ---
 // The whole registry. Order is the order they appear on the launcher ring.
@@ -190,6 +191,10 @@ void setup()
     Serial.printf("[batt] %s: %d%% %d mV\n", batt.valid ? "ok" : "not answering",
                   batt.percent, batt.millivolts);
 
+    // Sound last, and only here: it needs the codec, which needs the I2C bus that is
+    // already up, and a failed codec must not stop the launcher from starting.
+    sound::begin();
+
     launcher::begin(GAMES, GAME_COUNT);
 
     showSplash();
@@ -209,6 +214,7 @@ void loop()
 
     input::update(dt);
     power::poll(now);      // the fuel gauge, at most every couple of seconds
+    sound::update();       // keeps the I2S fed: silence when nothing is sounding
     handleBootButton();
 
     int bandY0 = 0;

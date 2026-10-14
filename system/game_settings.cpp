@@ -12,6 +12,7 @@
 #include "gfx.h"
 #include "input.h"
 #include "power.h"
+#include "sound.h"
 
 // ------------------------------------------------------------------ layout -----
 static const int HEAD_Y   = 30;       // the page title and the way back
@@ -87,6 +88,7 @@ void GameSettings::apply(int percent)
     audio::verify(percent);
     shown = percent;
     raw = audio::rawRegister();
+    sound::nudge(percent);        // so the level can be heard while it is being set
     Serial.printf("[audio] volume -> %d%% (nvs %s, codec reg 0x32 = %d)\n", percent,
                   saved ? "verified" : "NOT SAVED", raw);
 }

@@ -5,6 +5,7 @@
 
 #include "gfx.h"
 #include "input.h"
+#include "sound.h"
 
 namespace launcher {
 
@@ -142,9 +143,11 @@ Game *update(float dt)
                 if (dx * dx + dy * dy <= half * half) {
                     // Re-base rather than assign, so the carousel eases to the
                     // tapped entry by the shortest route instead of unwinding.
+                    const bool wasSelected = (i == selIndex());
                     sel += i - selIndex();
                     launching = i;
                     launchT = 0.0f;
+                    sound::play2(wasSelected ? 880 : 660, 30, wasSelected ? 1320 : 880, 45);
                     return nullptr;
                 }
             }
@@ -154,6 +157,7 @@ Game *update(float dt)
             if (cdx * cdx + cdy * cdy <= CENTER_R * CENTER_R) {
                 launching = selIndex();
                 launchT = 0.0f;
+                sound::launch();
                 return nullptr;
             }
         }
