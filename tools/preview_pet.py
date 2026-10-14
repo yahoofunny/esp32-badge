@@ -42,20 +42,25 @@ COL_ACCENT = (0xD9, 0x77, 0x57)
 COL_WARN = (0xE0, 0x50, 0x50)
 COL_PANEL = (0x1A, 0x1A, 0x26)
 
-HEAD_Y = 44
-RULE1_Y = 58
+HEAD_Y = 24
+RULE1_Y = 38
 METER_COL_A, METER_COL_B = 54, 196
-METER_ROW0, METER_ROW1 = 74, 88
-HEALTH_Y = 106
-PET_CX, PET_CY = 116, 172
-SPEECH_X0, SPEECH_X1 = 212, 352
-SPEECH_PAD = 6
+METER_ROW0, METER_ROW1 = 50, 64
+HEALTH_Y = 78
+BUBBLE_CY = 110
+BUBBLE_RX = 95
+BUBBLE_RXMIN = 34
+BUBBLE_TAIL = 5
+BUBBLE_RYMIN = 15
+SPEECH_PAD = 8
+SPEECH_COLS = 16
 SPEECH_LINE = 11
-SPEECH_MAXLINES = 3
+SPEECH_MAXLINES = 2
+PET_CX, PET_CY = 180, 184
 MENU_R = 134.0
 MENU_SPAN = 110.0
 MENU_HIT = 24.0
-RULE_X0, RULE_X1 = 62, 298
+RULE_X0, RULE_X1 = 76, 284
 CHAR_W = 7
 BAR_CHARS = 8
 
@@ -236,29 +241,41 @@ def stroke_circle(px, cx, cy, r, col, amount):
             px[x, y] = c
 
 
+def ellipse_panel(px, cx, cy, rx, ry, tail, fill_col, edge):
+    """Mirrors ellipsePanel in game_pet.cpp."""
+    for x in range(-rx, rx + 1):
+        t = x / rx
+        h = int(ry * math.sqrt(max(0.0, 1.0 - t * t)) + 0.5)
+        if h <= 0:
+            continue
+        fill_rect(px, cx + x, cy - h, 1, h * 2, fill_col)
+        fill_rect(px, cx + x, cy - h, 1, 1, edge)
+        if abs(x) > tail:
+            fill_rect(px, cx + x, cy + h - 1, 1, 1, edge)
+    if tail <= 0:
+        return
+    for k in range(BUBBLE_TAIL):
+        half = tail - k * tail // BUBBLE_TAIL
+        fill_rect(px, cx - half, cy + ry + k, half * 2 + 1, 1, fill_col)
+        fill_rect(px, cx - half - 1, cy + ry + k, 1, 1, edge)
+        fill_rect(px, cx + half + 1, cy + ry + k, 1, 1, edge)
+
+
 def draw_thought(px, thought):
     if not thought:
         return
-    inner = SPEECH_X1 - SPEECH_X0 - 2 * SPEECH_PAD
-    lines = wrap_thought(thought, inner // CHAR_W, SPEECH_MAXLINES)
+    lines = wrap_thought(thought, SPEECH_COLS, SPEECH_MAXLINES)
     if not lines:
         return
-    h = len(lines) * SPEECH_LINE + 2 * SPEECH_PAD - 3
-    y0 = PET_CY - h // 2
-    y1 = y0 + h
-    tail_top, tail_bot = PET_CY - 6, PET_CY + 6
-    for k in range(7):
-        half = 6 - k
-        fill_rect(px, SPEECH_X0 - 1 - k, PET_CY - half, 1, half * 2, COL_PANEL)
-    fill_rect(px, SPEECH_X0, y0, SPEECH_X1 - SPEECH_X0, h, COL_PANEL)
-    fill_rect(px, SPEECH_X0, y0, SPEECH_X1 - SPEECH_X0, 1, COL_RULE)
-    fill_rect(px, SPEECH_X0, y1 - 1, SPEECH_X1 - SPEECH_X0, 1, COL_RULE)
-    fill_rect(px, SPEECH_X1 - 1, y0, 1, h, COL_RULE)
-    fill_rect(px, SPEECH_X0, y0, 1, tail_top - y0, COL_RULE)
-    fill_rect(px, SPEECH_X0, tail_bot, 1, y1 - tail_bot, COL_RULE)
+    widest = max(len(l) * CHAR_W for l in lines)
+    rx = min(BUBBLE_RX, max(BUBBLE_RXMIN, widest // 2 + SPEECH_PAD + 4))
+    ry = max(BUBBLE_RYMIN, (len(lines) * SPEECH_LINE) // 2 + SPEECH_PAD)
+    edge = tuple(int(v * 0.55) for v in COL_ACCENT)
+    ellipse_panel(px, PET_CX, BUBBLE_CY, rx, ry, 7, COL_PANEL, edge)
+    y0 = BUBBLE_CY - (len(lines) * SPEECH_LINE) // 2
     for i, line in enumerate(lines):
-        draw_text(px, FONT, line, SPEECH_X0 + SPEECH_PAD,
-                  y0 + SPEECH_PAD - 1 + i * SPEECH_LINE, COL_TEXT, 1)
+        w = len(line) * CHAR_W
+        draw_text(px, FONT, line, PET_CX - w // 2, y0 + i * SPEECH_LINE, COL_TEXT, 1)
 
 
 def draw_chrome(px, stage, hunger, energy, happy, clean, health, name="CLAWD"):

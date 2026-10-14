@@ -217,30 +217,39 @@ static const char *const T_HUNGRY[] = { "my stomach is rumbling", "got anything 
 static const char *const T_TIRED[]  = { "so sleepy...", "i could nap", "eyes are heavy" };
 static const char *const T_DIRTY[]  = { "i need a bath", "feeling grubby", "i smell funny" };
 static const char *const T_SAD[]    = { "entertain me?", "it is boring here", "play with me?" };
-static const char *const T_GOOD[]   = { "life is good", "i like it here", "thanks for looking after me" };
+static const char *const T_GOOD[]   = { "life is good", "i like it here", "thanks for the care" };
 static const char *const T_IDLE[]   = { "just hanging out", "nice day", "watching the pixels", "hello!" };
 
 static const char *const NAMES[] = { "CLAWD", "PIP", "MOMO", "BOB", "ZIGGY", "NOVA" };
 static const int NAME_COUNT = (int)(sizeof(NAMES) / sizeof(NAMES[0]));
 
 // ------------------------------------------------------------------ layout -----
-static const int HEAD_Y  = 44;
-static const int RULE1_Y = 58;
+static const int HEAD_Y  = 24;
+static const int RULE1_Y = 38;
 static const int METER_COL_A = 54, METER_COL_B = 196;
-static const int METER_ROW0  = 74,  METER_ROW1 = 88;
-static const int HEALTH_Y    = 106;
+static const int METER_ROW0  = 50,  METER_ROW1 = 64;
+static const int HEALTH_Y    = 78;
 
-// The pet sits left of centre, which is what frees the right-hand side for its
-// speech. Under its feet the speech had the whole width but only about ten pixels of
-// height between the body and the menu, so anything longer than one line had nowhere
-// to go.
-static const int PET_CX      = 116;
-static const int PET_CY      = 172;
-static const int SPEECH_X0   = 212;
-static const int SPEECH_X1   = 352;
-static const int SPEECH_PAD  = 6;
+// clawd stays in the middle, and what he says goes over his head: a ringed bubble
+// centred on the screen's own axis. A rectangle beside him was the wrong shape for a
+// round panel and pushed him off centre to make room for it.
+//
+// The top block is compressed to pay for the bubble -- the header up to 28 and the
+// meter rows to 54 and 68, all a line's worth tighter than they were.
+static const int BUBBLE_CY   = 110;
+static const int BUBBLE_RX   = 95;    // widest the bubble gets
+static const int BUBBLE_RXMIN = 34;
+static const int BUBBLE_TAIL = 5;     // how far the point hangs below the ring
+static const int BUBBLE_RYMIN = 15;   // so a one-line bubble is not a sliver
+static const int SPEECH_PAD  = 8;
+// Deliberately narrow: a wider box fits more thoughts on one line and comes out as a
+// flat ellipse, which reads as a bar rather than as a bubble. Two lines make it round.
+static const int SPEECH_COLS = 16;
 static const int SPEECH_LINE = 11;    // 8 px glyphs plus leading
-static const int SPEECH_MAXLINES = 3;
+static const int SPEECH_MAXLINES = 2;
+
+static const int PET_CX      = 180;
+static const int PET_CY      = 184;
 
 // The menu follows the bezel: six items on an arc across the bottom. Two rows of
 // three put the entries about 30 px apart with 8 px of glyph to hit, which is not a
@@ -250,7 +259,9 @@ static const float MENU_R    = 134.0f;
 static const float MENU_SPAN = 110.0f;    // degrees of arc, centred on straight down
 static const float MENU_HIT  = 24.0f;
 
-static const int RULE_X0 = 62, RULE_X1 = 298;   // the header rule's span
+// The header rule's span. Not the full width: at y=38 the bezel leaves only about
+// x=69..291 visible, and a line drawn past that just ends under the rim.
+static const int RULE_X0 = 76, RULE_X1 = 284;
 static const int CHAR_W  = 7;                   // the font's advance at scale 1
 static const int BAR_CHARS = 8;       // '#' filled, '.' empty
 
@@ -535,36 +546,58 @@ static int wrapThought(const char *s, char out[][24], int maxLines, int cols)
     return n;
 }
 
+// A filled ellipse with its top and bottom edges drawn as a ring. gfx has no ellipse
+// because nothing else has wanted one: the rest of the screen is rectangles, circles
+// and the menu's arc.
+static void ellipsePanel(int cx, int cy, int rx, int ry, int tail, uint16_t fill,
+                         uint16_t edge)
+{
+    for (int x = -rx; x <= rx; x++) {
+        const float t = (float)x / (float)rx;
+        const int h = (int)((float)ry * sqrtf(1.0f - t * t) + 0.5f);
+        if (h <= 0) continue;
+        gfx::fillRect(cx + x, cy - h, 1, h * 2, fill);
+        gfx::pixel(cx + x, cy - h, edge);
+        // Leave a gap in the bottom edge where the point hangs off it.
+        if (abs(x) > tail) gfx::pixel(cx + x, cy + h - 1, edge);
+    }
+    if (tail <= 0) return;
+    for (int k = 0; k < BUBBLE_TAIL; k++) {
+        const int half = tail - k * tail / BUBBLE_TAIL;
+        gfx::fillRect(cx - half, cy + ry + k, half * 2 + 1, 1, fill);
+        gfx::pixel(cx - half - 1, cy + ry + k, edge);
+        gfx::pixel(cx + half + 1, cy + ry + k, edge);
+    }
+}
+
 void GamePet::drawThought()
 {
     if (!thought[0]) return;
 
     char lines[SPEECH_MAXLINES][24];
-    const int inner = SPEECH_X1 - SPEECH_X0 - 2 * SPEECH_PAD;
-    const int n = wrapThought(thought, lines, SPEECH_MAXLINES, inner / CHAR_W);
+    const int n = wrapThought(thought, lines, SPEECH_MAXLINES, SPEECH_COLS);
     if (n <= 0) return;
 
-    const int h = n * SPEECH_LINE + 2 * SPEECH_PAD - 3;
-    const int y0 = PET_CY - h / 2;
-    const int y1 = y0 + h;
-    const int tailTop = PET_CY - 6, tailBot = PET_CY + 6;
-
-    // The tail first, then the box over its inner end, then the left edge only above
-    // and below the tail, so the outline opens into the pointer instead of crossing it.
-    for (int k = 0; k < 7; k++) {
-        const int half = 6 - k;
-        gfx::fillRect(SPEECH_X0 - 1 - k, PET_CY - half, 1, half * 2, COL_PANEL);
-    }
-    gfx::fillRect(SPEECH_X0, y0, SPEECH_X1 - SPEECH_X0, h, COL_PANEL);
-    gfx::fillRect(SPEECH_X0, y0, SPEECH_X1 - SPEECH_X0, 1, COL_RULE);
-    gfx::fillRect(SPEECH_X0, y1 - 1, SPEECH_X1 - SPEECH_X0, 1, COL_RULE);
-    gfx::fillRect(SPEECH_X1 - 1, y0, 1, h, COL_RULE);
-    gfx::fillRect(SPEECH_X0, y0, 1, tailTop - y0, COL_RULE);
-    gfx::fillRect(SPEECH_X0, tailBot, 1, y1 - tailBot, COL_RULE);
-
+    int widest = 0;
     for (int i = 0; i < n; i++) {
-        gfx::text(lines[i], SPEECH_X0 + SPEECH_PAD, y0 + SPEECH_PAD - 1 + i * SPEECH_LINE,
-                  COL_TEXT, 1);
+        const int w = (int)strlen(lines[i]) * CHAR_W;
+        if (w > widest) widest = w;
+    }
+    // Semi-axes measured to the text rather than guessed, so a short thought gets a
+    // small bubble and a long one gets a wide one.
+    int rx = widest / 2 + SPEECH_PAD + 4;
+    if (rx < BUBBLE_RXMIN) rx = BUBBLE_RXMIN;
+    if (rx > BUBBLE_RX) rx = BUBBLE_RX;
+    int ry = (n * SPEECH_LINE) / 2 + SPEECH_PAD;
+    if (ry < BUBBLE_RYMIN) ry = BUBBLE_RYMIN;
+    const int tail = 7;
+
+    ellipsePanel(PET_CX, BUBBLE_CY, rx, ry, tail, COL_PANEL, gfx::dim(COL_ACCENT, 0.55f));
+
+    const int y0 = BUBBLE_CY - (n * SPEECH_LINE) / 2;
+    for (int i = 0; i < n; i++) {
+        const int w = (int)strlen(lines[i]) * CHAR_W;
+        gfx::text(lines[i], PET_CX - w / 2, y0 + i * SPEECH_LINE, COL_TEXT, 1);
     }
 }
 
@@ -860,8 +893,8 @@ void GamePet::update(float dt)
             dragging = true;
         }
         if (dragging) {
-            petX = clampf((float)input::tapX(), 52.0f, 232.0f);
-            petY = clampf((float)input::tapY(), 110.0f, 236.0f);
+            petX = clampf((float)input::tapX(), 84.0f, 276.0f);
+            petY = clampf((float)input::tapY(), 126.0f, 240.0f);
         } else {
             // Drifts back to its resting place.
             petX += ((float)PET_CX - petX) * fminf(1.0f, 2.5f * dt);

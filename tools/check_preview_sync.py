@@ -53,13 +53,13 @@ def main() -> int:
         return (int(ma.group(1)), int(mb.group(1))) if ma and mb else None
 
     # --- layout: every coordinate the two draw at ---------------------------------
-    for key in ["HEAD_Y", "RULE1_Y", "HEALTH_Y", "SPEECH_PAD", "SPEECH_LINE",
-                "SPEECH_MAXLINES", "BAR_CHARS"]:
+    for key in ["HEAD_Y", "RULE1_Y", "HEALTH_Y", "BUBBLE_CY", "BUBBLE_RX",
+                "BUBBLE_RXMIN", "BUBBLE_TAIL", "BUBBLE_RYMIN", "SPEECH_PAD",
+                "SPEECH_LINE", "SPEECH_MAXLINES", "SPEECH_COLS", "BAR_CHARS"]:
         check(key, scalar(cpp, key), scalar(preview, key))
 
     for a, b in [("METER_COL_A", "METER_COL_B"), ("METER_ROW0", "METER_ROW1"),
-                 ("RULE_X0", "RULE_X1"), ("PET_CX", "PET_CY"),
-                 ("SPEECH_X0", "SPEECH_X1")]:
+                 ("RULE_X0", "RULE_X1"), ("PET_CX", "PET_CY")]:
         check(f"{a}/{b}", pair(cpp, a, b), pair(preview, a, b))
 
     # --- colours ------------------------------------------------------------------
@@ -120,7 +120,7 @@ def main() -> int:
         print("preview has drifted from the firmware:")
         print("\n".join(bad))
         return 1
-    print(f"preview matches the firmware on {7 + 6 + 3 + 7 + len(MOODS) + 2} mirrored values")
+    print(f"preview matches the firmware on {13 + 5 + 3 + 7 + len(MOODS) + 2} mirrored values")
     return 0
 
 
