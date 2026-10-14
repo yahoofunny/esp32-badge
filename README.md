@@ -114,10 +114,35 @@ Then restore any time with:
 
 ## Gotchas worth knowing
 
+**Never let esptool rewrite the image header when restoring a dump.** When writing
+a raw flash dump at `0x0`, esptool patches the flash-parameter byte (offset 2, SPI
+mode) if you pass `--flash_mode` / `--flash_size` / `--flash_freq`. The stock
+bootloader's header is marked **DIO** — it upgrades itself to QIO at runtime — so
+forcing `--flash_mode qio` there leaves the bootloader unable to read flash and the
+board watchdog-resets in a loop (`rst:0x7 TG0WDT_SYS_RST`), with nothing on the
+console but the ROM banner.
+
+Always restore with `keep`:
+
+```bash
+esptool --chip esp32s3 --port COM3 --baud 921600 write_flash \
+    --flash_mode keep --flash_size keep --flash_freq keep --verify \
+    0x0 backup/1.85B-stock-16MB.bin
+```
+
+esptool's "Hash of data verified" is not a safety net here — it checks the data
+*after* patching, so it passes either way. `tools/restore_stock.sh` already does
+this correctly.
+
 **Two different LVGL versions.** The Arduino examples ship **LVGL 8.4.0**; the
 ESP-IDF examples and the stock system use **LVGL 9.5.0**. The APIs are not
 compatible (`lv_scr_act()` vs `lv_screen_active()`, the display/indev API was
 reworked). Check which version any example you copy was written for.
+
+**Flashing replaces the whole system, not an app.** The stock firmware is a single
+firmware image, not an OS with installed apps. Flash a demo sketch and the stock UI
+is gone — there is no "exit" gesture, and a power cycle boots straight back into the
+demo. To get the stock system back, reflash it (`tools/restore_stock.sh`).
 
 **Driving ESP-IDF scripts from Git Bash.** Two traps:
 

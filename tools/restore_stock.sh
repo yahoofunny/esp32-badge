@@ -66,10 +66,15 @@ echo "Port: $PORT"
 echo "This overwrites the ENTIRE flash. Press Ctrl-C within 5s to abort."
 sleep 5
 
-# 4MB-aligned images (the published one is padded to the app region) are written
-# at 0x0; the script always writes at 0x0 which is correct for both sources.
+# Restore the image byte-for-byte.
+#
+# --flash_mode/--flash_size/--flash_freq MUST stay "keep". Passing real values
+# makes esptool rewrite the flash-parameter byte in the image header (offset 2,
+# SPI mode). The stock bootloader is built for DIO; forcing QIO there leaves it
+# unable to read flash and the board watchdog-resets in a loop.
+# --verify reads the written regions back and compares.
 "$ESPTOOL" --chip esp32s3 --port "$PORT" --baud 921600 \
-    write_flash --flash_mode qio --flash_size 16MB --flash_freq 80m \
+    write_flash --flash_mode keep --flash_size keep --flash_freq keep --verify \
     0x0 "$IMAGE"
 
 echo ""
