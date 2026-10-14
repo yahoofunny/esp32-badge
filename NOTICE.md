@@ -16,13 +16,13 @@ pet, by way of the blog it was first copied into.
 | `system/clawd-source.png` | the same source art, kept beside the firmware |
 | `system/assets_pet.h` | the same art at four sizes, the pet's body |
 | `games/clawd-roll/icon.png`, `icon-256.png` | the project icon, composed from it |
-| `system/assets_icons.h` | frames from the same project's `assets/gif` animations |
+| `system/assets_icons.h` | the same art, posed three ways |
 
-The launcher icons come from individual frames of clawd-on-desk's animation set: clawd
-at a laptop, clawd under an idea bulb, clawd in headphones. `tools/make_icon_sprites.py`
-picks the frame with the largest ink bounding box from each and reduces it to a small
-sprite; the GIFs themselves are not vendored, only those three frames' worth of pixels.
-The animations are the same licence and the same character as the artwork above.
+The launcher icons are not new artwork: `tools/make_icon_sprites.py` takes the source
+above and moves a few pixel runs in it -- leaning it, raising one arm, adding ears -- so
+the three entries read as three poses of one creature. Props taken from clawd-on-desk's
+`assets/gif` animations were tried and rejected; at launcher size they sat on the
+character like objects rather than belonging to him. None of those GIFs are vendored.
 
 This choice of licence is what made AGPL-3.0 the right one for the repository as a
 whole: keeping the art and shipping the source under anything more permissive would

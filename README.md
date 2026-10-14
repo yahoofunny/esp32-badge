@@ -142,9 +142,11 @@ system/
 └── partitions.csv        must match the stock layout — see Coexistence below
 ```
 
-Each entry draws its own icon from a different clawd animation — at a laptop, under an
-idea bulb, in headphones — because three copies of one standing pose, told apart only by
-the colour of the disc behind them, is not a launcher.
+Each entry draws its own icon, and the three are poses of the same creature rather than
+props stuck onto it: leaning into a roll, one arm raised, ears up. Three copies of one
+standing pose, told apart only by the colour of the disc behind them, is not a launcher —
+but neither is a crate or a pair of headphones bolted on, which is what the first
+attempt did and what it looked like on the panel.
 
 **Controls.** Tilt the board left or right to step the carousel — one lean moves one
 place and then latches until the board is level again, so a held tilt does not

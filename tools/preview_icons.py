@@ -31,6 +31,10 @@ DISCS = {
 ICON_SIZES = [0.56 * 46, 0.56 * 58, 0.56 * 74, 0.56 * 74 * 2.1]
 
 
+def swap16(c):
+    return ((c & 0x00FF) << 8) | ((c & 0xFF00) >> 8)
+
+
 def load(path):
     src = open(path, encoding="utf-8").read()
     out = {}
@@ -45,10 +49,17 @@ def load(path):
             r"PX\(0x([0-9A-F]{4})\)",
             re.search(rf"icon_{sym}_palette\[4\] = \{{(.*?)\}};", src, re.S).group(1))]
         pal = [(0, 0, 0)]
-        for c in raw:
-            v = ((c & 0x00FF) << 8) | ((c & 0xFF00) >> 8)   # un-swap, then expand
-            pal.append((((v >> 11) & 0x1F) * 255 // 31, ((v >> 5) & 0x3F) * 255 // 63,
-                        (v & 0x1F) * 255 // 31))
+        for literal in raw:
+            # The whole chain, so a mistake in the generator shows up here: the
+            # firmware stores PX(literal) in the palette, writes that value to the
+            # framebuffer untouched, and the panel reads the framebuffer big-endian.
+            # Getting this model wrong is how the first icon set shipped with its
+            # colours byte-swapped while this preview showed them correctly.
+            in_framebuffer = swap16(literal)             # PX(literal)
+            on_panel = swap16(in_framebuffer)            # the panel reads big-endian
+            pal.append((((on_panel >> 11) & 0x1F) * 255 // 31,
+                        ((on_panel >> 5) & 0x3F) * 255 // 63,
+                        (on_panel & 0x1F) * 255 // 31))
         out[sym] = (w, h, rb, data, pal)
     return out
 
