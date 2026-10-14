@@ -157,6 +157,8 @@ python tools/make_icon.py              # regenerate the project icon
 
 python tools/preview_pet.py            # check the pet's layout before flashing it
 python tools/preview_launcher.py       # likewise for the carousel
+python tools/check_preview_sync.py     # the previews only verify anything while they
+                                       # still agree with the firmware's constants
 ```
 
 Rendering bypasses LVGL completely: the firmware owns one 360×360 RGB565 framebuffer
