@@ -23,6 +23,7 @@
 #include "Display_ST77916.h"
 #include "I2C_Driver.h"
 #include "arena.h"
+#include "audio.h"
 #include "clawd_sprite.h"
 #include "esp_heap_caps.h"
 #include "esp_ota_ops.h"
@@ -30,6 +31,7 @@
 #include "game.h"
 #include "game_clawd.h"
 #include "game_pet.h"
+#include "game_settings.h"
 #include "game_tap.h"
 #include "game_xiaozhi.h"
 #include "gfx.h"
@@ -46,8 +48,9 @@ static GameClawd   g_clawd;
 static GameTap     g_tap;
 static GamePet     g_pet;
 static GameXiaoZhi g_xiaozhi;
+static GameSettings g_settings;
 
-static Game *const GAMES[] = { &g_clawd, &g_tap, &g_pet, &g_xiaozhi };
+static Game *const GAMES[] = { &g_clawd, &g_tap, &g_pet, &g_xiaozhi, &g_settings };
 static const int   GAME_COUNT = (int)(sizeof(GAMES) / sizeof(GAMES[0]));
 
 // ----------------------------------------------------------------- screens ---
@@ -165,6 +168,16 @@ void setup()
 
     input::init();
     Serial.println("[sys] input ready");
+
+    // The level lives in the codec, which has no reset line on this board, so whatever
+    // the last firmware left there is what is there now. Read it before touching it:
+    // this line is the evidence for whether the assistant keeps its own idea of the
+    // volume or inherits this one.
+    Serial.printf("[audio] codec at boot: reg 0x32 = %d (%d%%)\n",
+                  audio::rawRegister(), audio::volume());
+    audio::applyStored();
+    Serial.printf("[audio] after applying the saved level: reg 0x32 = %d (%d%%)\n",
+                  audio::rawRegister(), audio::volume());
 
     launcher::begin(GAMES, GAME_COUNT);
 
