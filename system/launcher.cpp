@@ -26,8 +26,18 @@ static const float CENTER_R  = 46.0f;    // centre label exclusion radius
 
 // One lean of the board moves exactly one place, then the step latches until the
 // board is level again. Without the latch a held tilt free-runs through the list.
-static const float TILT_STEP    = 0.20f;  // g
-static const float TILT_RELEASE = 0.07f;  // g
+// One deliberate lean of the board moves exactly one place.
+//
+// Three things together, because thresholds alone are not enough to tell a lean
+// apart from handling noise. The threshold is high enough to clear the wobble of
+// simply holding the board (~21 degrees), the lean has to be *sustained* for a
+// moment before it counts -- a wobble is momentary, a deliberate lean is not -- and
+// the step latch only re-arms once the board is genuinely back near level (~10
+// degrees). Without the release threshold being this high, a single wobble through
+// the middle re-arms and fires several times.
+static const float TILT_STEP    = 0.36f;  // g; ~21 degrees
+static const float TILT_RELEASE = 0.17f;  // g; ~10 degrees
+static const float TILT_DWELL   = 0.14f;  // seconds the lean must be held
 static const float STEP_ANIM    = 9.0f;   // carousel easing rate, per second
 static const float LAUNCH_TIME  = 0.34f;  // seconds
 
@@ -37,6 +47,7 @@ static int   g_count = 0;
 static float selPos  = 0.0f;    // animated carousel position, in index units
 static int   sel      = 0;
 static bool  armed    = true;
+static float leanHeld = 0.0f;   // seconds the current lean has been sustained
 static float age      = 0.0f;   // seconds since the launcher appeared
 static int   launching = -1;
 static float launchT   = 0.0f;
@@ -70,6 +81,7 @@ void begin(Game *const *games, int count)
     selPos = 0.0f;
     sel = 0;
     armed = true;
+    leanHeld = 0.0f;
     age = 0.0f;
     launching = -1;
     launchT = 0.0f;
@@ -86,12 +98,24 @@ Game *update(float dt)
 
     if (launching < 0) {
         // --- tilt stepper ----------------------------------------------------
+        // Requires a sustained lean, not just a reading over the threshold: the
+        // accelerometer is noisy and a held board wobbles past any single-sample
+        // limit, so the dwell is what separates intent from handling.
         const float tx = input::tiltX();
-        if (armed && fabsf(tx) > TILT_STEP) {
-            step(tx > 0 ? +1 : -1);
-            armed = false;
-        } else if (!armed && fabsf(tx) < TILT_RELEASE) {
+        if (armed) {
+            if (fabsf(tx) > TILT_STEP) {
+                leanHeld += dt;
+                if (leanHeld >= TILT_DWELL) {
+                    step(tx > 0 ? +1 : -1);
+                    armed = false;
+                    leanHeld = 0.0f;
+                }
+            } else {
+                leanHeld = 0.0f;
+            }
+        } else if (fabsf(tx) < TILT_RELEASE) {
             armed = true;
+            leanHeld = 0.0f;
         }
 
         // --- touch -----------------------------------------------------------
