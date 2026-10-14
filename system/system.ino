@@ -194,6 +194,7 @@ void setup()
 
     // Sound last, and only here: it needs the codec, which needs the I2C bus that is
     // already up, and a failed codec must not stop the launcher from starting.
+    //
     sound::begin();
 
     // After the I2C bus is up, which the RTC shares with everything else.
