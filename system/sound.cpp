@@ -54,7 +54,9 @@ static void fill(int16_t *out, int count)
         float env = 1.0f;
         if (elapsed < 2) env = elapsed * 0.5f;
         else env = (float)msLeft / (float)msTotal;
-        const int amp = (int)(env * 9000.0f);
+        // -3 dBFS at the peak of the envelope. The codec's own level is the volume
+        // control; a synth that also runs quietly just makes everything quieter.
+        const int amp = (int)(env * 23000.0f);
         out[i] = (int16_t)((phase & 0x80000000u) ? amp : -amp);
         msLeft--;
     }
@@ -70,13 +72,10 @@ namespace sound {
 
 bool begin()
 {
-    i2s.setPins(PIN_BCK, PIN_LRCK, PIN_DOUT, PIN_DIN, PIN_MCK);
-    if (!i2s.begin(I2S_MODE_STD, RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO,
-                   I2S_STD_SLOT_LEFT)) {
-        Serial.println("[sound] i2s did not start");
-        return false;
-    }
-
+    // Codec first, then the clocks. This is the order the vendor example uses, and the
+    // codec's divisors are computed from the configured rate rather than measured, so
+    // nothing depends on the order -- but it is one fewer difference from a path that is
+    // known to work on this board.
     codec = es8311_create(I2C_NUM_0, ES8311_ADDRRES_0);
     if (!codec) {
         Serial.println("[sound] codec handle failed");
@@ -85,6 +84,13 @@ bool begin()
     const es8311_clock_config_t clk = { false, false, true, RATE * 256, RATE };
     if (es8311_init(codec, &clk, ES8311_RESOLUTION_16, ES8311_RESOLUTION_16) != ESP_OK) {
         Serial.println("[sound] codec did not initialise");
+        return false;
+    }
+
+    i2s.setPins(PIN_BCK, PIN_LRCK, PIN_DOUT, PIN_DIN, PIN_MCK);
+    if (!i2s.begin(I2S_MODE_STD, RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO,
+                   I2S_STD_SLOT_LEFT)) {
+        Serial.println("[sound] i2s did not start");
         return false;
     }
 

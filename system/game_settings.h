@@ -25,7 +25,7 @@ public:
     void render() override;
 
 private:
-    enum Page { PAGE_MENU, PAGE_VOLUME, PAGE_SYSTEM, PAGE_NET };
+    enum Page { PAGE_MENU, PAGE_VOLUME, PAGE_SYSTEM, PAGE_NET, PAGE_USB };
 
     Page page = PAGE_MENU;
 
@@ -45,14 +45,35 @@ private:
 
     void updateMenu();
     void updateVolume();
-    void updateInfo();      // both read-only pages: only BACK accepts a tap
+    void updateInfo();      // the read-only pages: only BACK accepts a tap
+    void updateUsb();
 
     void renderMenu();
     void renderVolume();
     void renderSystem();
     void renderNet();
+    void renderUsb();
 
     // The way back, at the top centre. Not the top-left: at that height the round bezel
     // leaves nothing visible out there.
     void renderBack();
+
+    // --- the USB drive page ---------------------------------------------------------
+    // The SD card handed to the host as a block device. It lives here rather than as a
+    // carousel entry: it is not something to play, and a mode that takes the board's only
+    // USB port away from the serial console is not something to fall into by accident.
+    enum UsbState { USB_STOPPED, USB_MOUNTED, USB_NO_CARD };
+    UsbState usbState = USB_STOPPED;
+    bool usbStarted = false;      // did TinyUSB actually take the port
+    bool usbHostEjected = false;  // the computer said it was done with the volume
+    int  usbSectors = 0;
+    int  usbSectorSize = 512;
+    float usbIdleSec = 0.0f;      // since the last thing the host asked for
+    float usbEjectedSec = 0.0f;
+
+    void usbStart();
+    // Stops the device and, if TinyUSB ever took the port, resets the chip. There is no
+    // way back otherwise: the hardware USB-Serial/JTAG shares the interface with it, and
+    // that is the port esptool resets through. Rebooting hands it back.
+    void usbStopAndReboot();
 };

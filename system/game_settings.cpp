@@ -1,7 +1,11 @@
 #include "game_settings.h"
 
 #include <Arduino.h>
+#include <FS.h>
 #include <Preferences.h>
+#include <SD_MMC.h>
+#include <USB.h>
+#include <USBMSC.h>
 #include <esp_mac.h>
 #include <esp_ota_ops.h>
 #include <math.h>
@@ -37,17 +41,24 @@ static const int BTN_R    = 28;
 static const int HINT_Y   = 316;
 
 // The menu: three items on an arc, the shape this round screen keeps asking for.
-static const float MENU_R    = 118.0f;
-static const float MENU_SPAN = 88.0f;
-static const float MENU_HIT  = 34.0f;
+static const float MENU_R    = 116.0f;
+static const float MENU_SPAN = 120.0f;
+static const float MENU_HIT  = 32.0f;
+static const int   MENU_COUNT = 4;
 
 static const uint16_t COL_BG     = PX(RGB565(0x0E, 0x0E, 0x16));
 static const uint16_t COL_TEXT   = PX(RGB565(0xEC, 0xEC, 0xF4));
 static const uint16_t COL_DIM    = PX(RGB565(0x6E, 0x6E, 0x80));
 static const uint16_t COL_ACCENT = PX(RGB565(0xE0, 0xA8, 0x50));
 static const uint16_t COL_TRACK  = PX(RGB565(0x28, 0x28, 0x38));
+static const uint16_t COL_WARN   = PX(RGB565(0xE0, 0x50, 0x50));
 
-static const char *const MENU_LABEL[3] = { "VOLUME", "SYSTEM", "NET" };
+static const char *const MENU_LABEL[MENU_COUNT] = { "VOLUME", "SYSTEM", "NET", "USB" };
+
+static bool inRect(int x, int y, int x0, int y0, int x1, int y1)
+{
+    return x >= x0 && x <= x1 && y >= y0 && y <= y1;
+}
 
 static float knobX(int percent)
 {
@@ -56,7 +67,7 @@ static float knobX(int percent)
 
 void GameSettings::menuSlot(int i, float *sx, float *sy) const
 {
-    const float step = MENU_SPAN / 2.0f;
+    const float step = MENU_SPAN / (float)(MENU_COUNT - 1);
     const float a = (-MENU_SPAN * 0.5f + step * (float)i) * PI_F / 180.0f;
     *sx = SCR_CX + sinf(a) * MENU_R;
     *sy = SCR_CY + cosf(a) * MENU_R;
@@ -94,6 +105,203 @@ void GameSettings::apply(int percent)
 }
 
 // ------------------------------------------------------------- lifecycle --------
+// --- the USB drive ---------------------------------------------------------------
+// The card handed to the host as a block device. This lives inside settings rather than
+// as a carousel entry: it is not something to play, and a mode that takes the board's
+// only USB port away from the serial console is not something to fall into by accident.
+//
+// Two ways out on its own, because a mode that has to be left by hand is a mode that gets
+// left un-left: once the host says it has finished with the volume, ten seconds later
+// nothing needs this any more; and if nothing has asked for a block in five minutes, the
+// same. Both reboot, which is what hands the serial port back.
+//
+// The card's pins are 12-17, which nothing else uses, so the screen keeps running while
+// the host reads it.
+
+static const int SD_PINS_CLK = 15, SD_PINS_CMD = 14;
+static const int SD_PINS_D0 = 16, SD_PINS_D1 = 17, SD_PINS_D2 = 12, SD_PINS_D3 = 13;
+
+static USBMSC usbMsc;
+static volatile bool usbHostGone = false;
+static volatile uint32_t usbTraffic = 0;      // bumped by every host request
+
+// One sector at a time, because the card wrapper only does whole sectors. A partial
+// write reads the rest of the sector back first: writing 512 bytes over a 100-byte
+// request would wipe the other 412.
+static int32_t usbReadBlocks(uint32_t lba, uint32_t offset, void *buffer, uint32_t bufsize)
+{
+    uint8_t *out = (uint8_t *)buffer;
+    uint8_t sector[512];
+    uint32_t done = 0;
+    usbTraffic++;
+    while (done < bufsize) {
+        if (!SD_MMC.readRAW(sector, lba)) return -1;
+        uint32_t n = 512 - offset;
+        if (n > bufsize - done) n = bufsize - done;
+        memcpy(out + done, sector + offset, n);
+        done += n;
+        lba++;
+        offset = 0;
+    }
+    return (int32_t)bufsize;
+}
+
+static int32_t usbWriteBlocks(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t bufsize)
+{
+    uint8_t sector[512];
+    uint32_t done = 0;
+    usbTraffic++;
+    while (done < bufsize) {
+        if (offset != 0 || bufsize - done < 512) {
+            if (!SD_MMC.readRAW(sector, lba)) return -1;
+        }
+        uint32_t n = 512 - offset;
+        if (n > bufsize - done) n = bufsize - done;
+        memcpy(sector + offset, buffer + done, n);
+        if (!SD_MMC.writeRAW(sector, lba)) return -1;
+        done += n;
+        lba++;
+        offset = 0;
+    }
+    return (int32_t)bufsize;
+}
+
+static bool usbStartStopCb(uint8_t, bool start, bool)
+{
+    if (!start) usbHostGone = true;
+    return true;
+}
+
+void GameSettings::usbStart()
+{
+    usbHostGone = false;
+    usbIdleSec = 0.0f;
+    usbEjectedSec = 0.0f;
+
+    SD_MMC.setPins(SD_PINS_CLK, SD_PINS_CMD, SD_PINS_D0, SD_PINS_D1, SD_PINS_D2, SD_PINS_D3);
+    if (!SD_MMC.begin("/sdcard")) {
+        usbState = USB_NO_CARD;
+        Serial.println("[usb] no card");
+        return;
+    }
+    usbSectors = SD_MMC.numSectors();
+    usbSectorSize = SD_MMC.sectorSize();
+    Serial.printf("[usb] card: %d sectors of %d, %llu MB\n", usbSectors, usbSectorSize,
+                  SD_MMC.cardSize() / (1024ULL * 1024ULL));
+
+    usbMsc.vendorID("esp32");
+    usbMsc.productID("clawd-badge-sd");
+    usbMsc.productRevision("1.0");
+    usbMsc.onStartStop(usbStartStopCb);
+    usbMsc.onRead(usbReadBlocks);
+    usbMsc.onWrite(usbWriteBlocks);
+    usbMsc.mediaPresent(true);
+    usbMsc.isWritable(true);
+    if (!usbMsc.begin(usbSectors, (uint16_t)usbSectorSize)) {
+        usbState = USB_NO_CARD;
+        Serial.println("[usb] mass storage did not start");
+        return;
+    }
+    USB.begin();
+    usbStarted = true;
+    usbState = USB_MOUNTED;
+    Serial.println("[usb] the card is a drive on the host; no COM port until this stops");
+}
+
+void GameSettings::usbStopAndReboot()
+{
+    if (usbStarted) {
+        usbMsc.end();
+        SD_MMC.end();
+        Serial.println("[usb] stopped; rebooting so the serial port comes back");
+        Serial.flush();
+        delay(200);
+        ESP.restart();          // does not return
+    }
+    SD_MMC.end();
+    usbState = USB_STOPPED;
+}
+
+void GameSettings::updateUsb()
+{
+    if (usbHostGone) usbHostEjected = true;
+
+    // Any request from the host counts as activity, so the idle timer only fires when
+    // nothing is being read or written -- a long copy keeps it alive.
+    static uint32_t seen = 0;
+    if (usbTraffic != seen) {
+        seen = usbTraffic;
+        usbIdleSec = 0.0f;
+    }
+
+    if (usbState == USB_MOUNTED) {
+        const float dt = 1.0f / 60.0f;
+        usbIdleSec += dt;
+        usbEjectedSec = usbHostEjected ? usbEjectedSec + dt : 0.0f;
+        if ((usbHostEjected && usbEjectedSec > 10.0f) || usbIdleSec > 300.0f) {
+            usbStopAndReboot();
+            return;
+        }
+    }
+
+    if (!input::tapped()) return;
+
+    if (inRect(input::tapX(), input::tapY(), BACK_X0, 14, BACK_X1, 48)) {
+        // Out of the page. With the card handed over there is no way back to the rest of
+        // the system except through a reboot, which is also what returns the port.
+        if (usbState == USB_MOUNTED) usbStopAndReboot();
+        else enterPage(PAGE_MENU);
+        return;
+    }
+    if (usbState == USB_MOUNTED) {
+        usbStopAndReboot();
+    } else if (usbState == USB_STOPPED || usbState == USB_NO_CARD) {
+        usbStart();
+    }
+}
+
+void GameSettings::renderUsb()
+{
+    renderBack();
+
+    gfx::textCentered("USB DRIVE", LABEL_Y, COL_DIM, 1);
+
+    char lines[6][32];
+    int n = 0;
+    const double gb = (double)usbSectors * usbSectorSize / 1e9;
+
+    switch (usbState) {
+    case USB_MOUNTED:
+        snprintf(lines[n++], 32, "the card is a drive");
+        snprintf(lines[n++], 32, "on your computer -- %.1f GB", gb);
+        snprintf(lines[n++], 32, "%s", usbHostEjected ? "the computer has let go"
+                                                     : "eject it there first");
+        break;
+    case USB_NO_CARD:
+        snprintf(lines[n++], 32, "no card, or it would not mount");
+        snprintf(lines[n++], 32, "tap to try again");
+        break;
+    default:
+        snprintf(lines[n++], 32, "the SD card at /sdcard");
+        snprintf(lines[n++], 32, "tap to hand it to the computer");
+        break;
+    }
+
+    const int y0 = 150 - (n - 1) * 14 / 2;
+    for (int i = 0; i < n; i++) {
+        const uint16_t col = (usbState == USB_NO_CARD) ? COL_WARN : COL_TEXT;
+        gfx::textCentered(lines[i], y0 + i * 14, col, 1);
+    }
+
+    if (usbState == USB_MOUNTED) {
+        gfx::textCentered(usbHostEjected ? "tap or BACK: stop and reboot"
+                                         : "eject there, then tap", HINT_Y, COL_DIM, 1);
+        gfx::textCentered("no COM port while connected", HINT_Y + 16, COL_DIM, 1);
+    } else {
+        gfx::textCentered("BACK returns to settings", HINT_Y, COL_DIM, 1);
+    }
+}
+
 void GameSettings::enterPage(Page p)
 {
     page = p;
@@ -112,18 +320,16 @@ void GameSettings::enter()
 
 void GameSettings::leave()
 {
+    // Still handed to the host: nothing gets the serial port back except the reset this
+    // does, and leaving with it taken would strand the board.
+    if (usbStarted) usbStopAndReboot();
     gfx::clear(COL_BG);
 }
 
 // ------------------------------------------------------------------ input -------
-static bool inRect(int x, int y, int x0, int y0, int x1, int y1)
-{
-    return x >= x0 && x <= x1 && y >= y0 && y <= y1;
-}
-
 void GameSettings::updateMenu()
 {
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < MENU_COUNT; i++) {
         float sx, sy;
         menuSlot(i, &sx, &sy);
         const float dx = (float)input::tapX() - sx;
@@ -193,6 +399,7 @@ void GameSettings::update(float dt)
     switch (page) {
     case PAGE_MENU:   updateMenu(); break;
     case PAGE_VOLUME: updateVolume(); break;
+    case PAGE_USB:    updateUsb(); break;
     default:          updateInfo(); break;
     }
     setDirty(0, SCR_H - 1);
@@ -218,7 +425,7 @@ void GameSettings::renderMenu()
     gfx::clear(COL_BG);
     gfx::textCentered("SETTINGS", HEAD_Y, COL_ACCENT, 1);
 
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < MENU_COUNT; i++) {
         float sx, sy;
         menuSlot(i, &sx, &sy);
         gfx::strokeCircle(sx, sy, MENU_HIT * 0.88f, 1.0f, gfx::dim(COL_ACCENT, 0.45f));
@@ -230,7 +437,7 @@ void GameSettings::renderMenu()
     char line[32];
     if (b.valid) snprintf(line, sizeof(line), "battery %d%%", b.percent);
     else         snprintf(line, sizeof(line), "battery --");
-    gfx::textCentered(line, 62, b.valid && b.percent < 20 ? PX(RGB565(0xE0, 0x50, 0x50))
+    gfx::textCentered(line, 62, b.valid && b.percent < 20 ? COL_WARN
                                                           : COL_DIM, 1);
 }
 
@@ -244,8 +451,18 @@ void GameSettings::renderVolume()
     char buf[24];
     snprintf(buf, sizeof(buf), "%d%%", shown < 0 ? 0 : shown);
     gfx::textCentered(buf, VALUE_Y, COL_TEXT, VALUE_SCALE);
+
+    // The register is a dB scale, not a percentage: 0xBF is 0 dB, each step is 0.5 dB, so
+    // the bottom half of this range is not quiet, it is silence. Showing the decibels is
+    // the whole difference between "it is broken" and "it is turned down".
+    if (raw >= 0) {
+        const int db = (raw - 191) / 2;
+        char line[28];
+        snprintf(line, sizeof(line), "%d dB%s", db, db < -35 ? "   too quiet" : "");
+        gfx::textCentered(line, VALUE_Y + 42, db < -35 ? COL_WARN : COL_DIM, 1);
+    }
     if (!saved) {
-        gfx::textCentered("could not save", VALUE_Y + 40, COL_DIM, 1);
+        gfx::textCentered("could not save", VALUE_Y + 58, COL_DIM, 1);
     }
 
     const int y = BAR_Y;
@@ -309,7 +526,7 @@ void GameSettings::renderSystem()
     row(5, "sketch",  v[5], COL_TEXT);
     row(6, "build",   v[6], COL_TEXT);
     row(7, "uptime",  v[7], COL_TEXT);
-    row(8, "battery", v[8], b.valid && b.percent < 20 ? PX(RGB565(0xE0, 0x50, 0x50))
+    row(8, "battery", v[8], b.valid && b.percent < 20 ? COL_WARN
                                                      : COL_TEXT);
     row(9, "running", v[9], COL_TEXT);
 }
@@ -370,7 +587,8 @@ void GameSettings::render()
     case PAGE_MENU:   renderMenu(); break;
     case PAGE_VOLUME: renderVolume(); break;
     case PAGE_SYSTEM: renderSystem(); break;
-    default:          renderNet(); break;
+    case PAGE_NET:    renderNet(); break;
+    default:          renderUsb(); break;
     }
 }
 

@@ -33,7 +33,6 @@
 #include "game_pet.h"
 #include "game_settings.h"
 #include "game_tap.h"
-#include "game_usbdrive.h"
 #include "game_xiaozhi.h"
 #include "gfx.h"
 #include "input.h"
@@ -52,9 +51,8 @@ static GameTap     g_tap;
 static GamePet     g_pet;
 static GameXiaoZhi g_xiaozhi;
 static GameSettings g_settings;
-static GameUsbDrive g_usbdrive;
 
-static Game *const GAMES[] = { &g_clawd, &g_tap, &g_pet, &g_usbdrive, &g_xiaozhi, &g_settings };
+static Game *const GAMES[] = { &g_clawd, &g_tap, &g_pet, &g_xiaozhi, &g_settings };
 static const int   GAME_COUNT = (int)(sizeof(GAMES) / sizeof(GAMES[0]));
 
 // ----------------------------------------------------------------- screens ---

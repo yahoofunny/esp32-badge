@@ -48,6 +48,9 @@ def constants(path):
             out[name] = m.group(1)
     # The register line's format specifically: the first snprintf in the file is the
     # percentage, so matching the first one grabs the wrong string.
+    m = re.search(r'MENU_LABEL\[MENU_COUNT\] = \{(.*?)\}', src)
+    if m:
+        out["MENU_LABEL"] = re.findall(r'"([^"]+)"', m.group(1))
     m = re.search(r'snprintf\(buf, sizeof\(buf\), "([^"]*0x32[^"]*)"', src)
     if m:
         out["REG_FMT"] = m.group(1)
@@ -109,8 +112,9 @@ def main():
 
     if args.page == "menu":
         text_centered(px, font, "SETTINGS", K["HEAD_Y"], accent, 1)
-        for i, label in enumerate(["VOLUME", "SYSTEM", "NET"]):
-            step = K["MENU_SPAN"] / 2.0
+        labels = K.get("MENU_LABEL", ["VOLUME", "SYSTEM", "NET"])
+        for i, label in enumerate(labels):
+            step = K["MENU_SPAN"] / (len(labels) - 1)
             import math
             a = math.radians(-K["MENU_SPAN"] * 0.5 + step * i)
             sx = 180 + math.sin(a) * K["MENU_R"]
