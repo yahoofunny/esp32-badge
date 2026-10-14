@@ -113,6 +113,7 @@ void GameXiaoZhi::render()
                   SCR_CX + cosf(a1) * 120.0f, SCR_CY + sinf(a1) * 120.0f, COL_ACCENT);
     }
 
-    gfx::textCentered("hold BOOT there to come back", SCR_H - 30, COL_DIM, 1);
+    // Curved: as a straight line at this height the round bezel eats both ends.
+    gfx::textArc("hold BOOT there to come back", SCR_CX, SCR_CY, 150.0f, COL_DIM, 1);
     setDirty(0, SCR_H - 1);
 }

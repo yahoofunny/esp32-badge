@@ -252,12 +252,14 @@ void render()
         drawIconAt(i, (i == launching) ? selBoost : 1.0f);
     }
 
-    // Names: the selected entry under the ring, and a hint line at the very bottom.
+    // Names: the selected entry under the ring, and a hint line along the bottom.
     if (launching < 0) {
         gfx::textCentered(g_games[selIndex()]->name(), (int)(SCR_CY + ORBIT_Y) + 34, COL_LABEL, 2);
-        gfx::textCentered(g_count > 1 ? "tilt to browse  -  tap to play"
-                                      : "tap to play",
-                          SCR_H - 22, COL_HINT, 1);
+        // Curved along the bezel rather than laid out as a straight line: at this
+        // height only about 170 of the 360 px are visible, so a chord of text loses
+        // both of its ends behind the round edge.
+        gfx::textArc(g_count > 1 ? "tilt to browse  -  tap to play" : "tap to play",
+                     SCR_CX, SCR_CY, 152.0f, COL_HINT, 1);
     } else {
         gfx::textCentered(g_games[launching]->name(), SCR_H - 30, COL_LABEL, 2);
     }

@@ -193,6 +193,56 @@ void textCentered(const char *s, int cy, uint16_t color, int scale)
     text(s, (int)(SCR_CX - w * 0.5f), cy, color, scale);
 }
 
+float visibleHalfWidth(int y)
+{
+    // The panel is a circle of radius SCR_W/2 centred on the screen. Anything a
+    // pixel outside that is behind the bezel.
+    const float r = SCR_W * 0.5f;
+    const float dy = (float)y - SCR_CY;
+    const float d2 = r * r - dy * dy;
+    return d2 <= 0.0f ? 0.0f : sqrtf(d2);
+}
+
+void textArc(const char *s, float cx, float cy, float radius, uint16_t color, int scale)
+{
+    if (!s || !*s || radius <= 1.0f) return;
+    if (scale < 1) scale = 1;
+
+    const int   n       = (int)strlen(s);
+    const float advance = (float)(GLYPH_ADVANCE * scale);   // px measured along the arc
+
+    // Parametrise the arc so that phi = 0 sits at the bottom of the circle and
+    // increasing phi runs to the right along it. At that point the advance
+    // direction is +x and "up" is towards the centre, so the line reads normally
+    // for someone looking at the screen.
+    const float total = n * advance;
+    float phi = -(total - advance) * 0.5f / radius;
+
+    for (const char *p = s; *p; p++, phi += advance / radius) {
+        const unsigned char c = (unsigned char)*p;
+        if (c < FONT_FIRST || c > FONT_LAST) continue;
+        const uint8_t *rows = font8x8[c - FONT_FIRST];
+
+        for (int gx = 0; gx < FONT_CELL; gx++) {
+            // Each column gets its own angle, so the glyph curves with the arc
+            // instead of being a flat stamp slid along it.
+            const float a  = phi + (gx * scale) / radius;
+            const float sa = sinf(a);
+            const float ca = cosf(a);
+            const float bx = cx + radius * sa;
+            const float by = cy + radius * ca;
+            const float ux = -sa;          // towards the centre == "up" on screen
+            const float uy = -ca;
+
+            for (int gy = 0; gy < FONT_CELL; gy++) {
+                if (!(rows[gy] & (0x80 >> gx))) continue;
+                const float d = gy * scale;
+                pixel((int)lroundf(bx + ux * d), (int)lroundf(by + uy * d), color);
+            }
+        }
+    }
+}
+
 // --- sprites ----------------------------------------------------------------
 void drawSpriteRotated(const Sprite &s, float cx, float cy, float angle,
                        float radius, const uint16_t palette[3])

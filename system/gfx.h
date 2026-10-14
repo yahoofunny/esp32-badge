@@ -51,6 +51,17 @@ void text(const char *s, int x, int y, uint16_t color, int scale = 1);
 int  textWidth(const char *s, int scale = 1);
 void textCentered(const char *s, int cy, uint16_t color, int scale = 1);
 
+// How far from the centre a pixel at row y is still on the visible panel. The
+// display is a 360 px square behind a round bezel, so the usable width shrinks
+// towards the top and bottom: a straight line of text near the edge gets clipped
+// even though it is well inside the framebuffer.
+float visibleHalfWidth(int y);
+
+// Text laid along a circular arc, centred on the bottom of the circle. This is the
+// only way to put a long line near the bottom edge of a round panel without losing
+// the ends of it, and it also looks more deliberate than a chord of text.
+void textArc(const char *s, float cx, float cy, float radius, uint16_t color, int scale = 1);
+
 // --- sprites ----------------------------------------------------------------
 // 2bpp indexed bitmap: index 0 is transparent, 1 and 2 select palette entries.
 struct Sprite {

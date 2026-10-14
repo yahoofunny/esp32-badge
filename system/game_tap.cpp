@@ -165,11 +165,13 @@ void GameTap::render()
         snprintf(buf, sizeof(buf), "%d", score);
         gfx::textCentered(buf, 8, COL_TEXT, 2);
 
-        // Misses as pips, right-aligned near the top.
+        // Misses as pips. These used to sit against the right edge, where the round
+        // bezel hid them completely: at y=46 only about x=60..300 is visible, so the
+        // player could never see how many lives were left.
         for (int i = 0; i < MAX_MISSES; i++) {
             const uint16_t c = (i < misses) ? PX(RGB565(0xE0, 0x50, 0x50))
                                             : PX(RGB565(0x2A, 0x2A, 0x3A));
-            gfx::fillCircle(SCR_W - 30.0f + i * 9.0f, 46.0f, 3.0f, c);
+            gfx::fillCircle(262.0f + i * 9.0f, 46.0f, 3.0f, c);
         }
     } else {
         gfx::fillCircle(SCR_CX, SCR_CY, 104.0f, COL_PANEL);
