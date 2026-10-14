@@ -243,7 +243,7 @@ def main():
     lines.append("};")
     lines.append("")
 
-    with open(args.output, "w", encoding="utf-8") as fh:
+    with open(args.output, "w", encoding="utf-8", newline=chr(10)) as fh:
         fh.write("\n".join(lines))
     print(f"wrote {args.output} "
           f"({sum(len(s[4]) for s in sprites)} bytes of bitmap data)")

@@ -206,7 +206,7 @@ def main():
         f"static const uint16_t ICON_INK = PX(0x{swap16(rgb565(*ICONS[0][4])):04X});",
         "",
     ]
-    with open(args.out, "w", encoding="utf-8") as fh:
+    with open(args.out, "w", encoding="utf-8", newline=chr(10)) as fh:
         fh.write("\n".join(lines))
     print(f"wrote {args.out} ({sum(len(b[6]) for b in built)} bytes of bitmap data)")
     return 0
