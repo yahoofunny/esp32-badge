@@ -1,0 +1,9 @@
+# Normalize line endings in the repository to LF, so shell scripts stay runnable
+# under Git Bash. Windows-only batch files get CRLF on checkout.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.exe binary
+*.bin binary
+*.zip binary
+*.pdf binary
