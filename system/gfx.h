@@ -57,10 +57,12 @@ void textCentered(const char *s, int cy, uint16_t color, int scale = 1);
 // even though it is well inside the framebuffer.
 float visibleHalfWidth(int y);
 
-// Text laid along a circular arc, centred on the bottom of the circle. This is the
-// only way to put a long line near the bottom edge of a round panel without losing
-// the ends of it, and it also looks more deliberate than a chord of text.
-void textArc(const char *s, float cx, float cy, float radius, uint16_t color, int scale = 1);
+// Note: there is deliberately no arc-text helper here. Laying a line along the
+// bezel looks tempting on a round panel and does keep the ends visible, but this
+// font is 8x8 pixels -- a glyph at the end of such a line ends up rotated by tens
+// of degrees, and a chunky bitmap glyph rotated 30 degrees reads as mangled rather
+// than decorative. Keep hint lines short enough to fit a chord instead, and use
+// visibleHalfWidth() to check that they do.
 
 // --- sprites ----------------------------------------------------------------
 // 2bpp indexed bitmap: index 0 is transparent, 1 and 2 select palette entries.

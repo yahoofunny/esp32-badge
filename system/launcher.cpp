@@ -255,11 +255,11 @@ void render()
     // Names: the selected entry under the ring, and a hint line along the bottom.
     if (launching < 0) {
         gfx::textCentered(g_games[selIndex()]->name(), (int)(SCR_CY + ORBIT_Y) + 34, COL_LABEL, 2);
-        // Curved along the bezel rather than laid out as a straight line: at this
-        // height only about 170 of the 360 px are visible, so a chord of text loses
-        // both of its ends behind the round edge.
-        gfx::textArc(g_count > 1 ? "tilt to browse  -  tap to play" : "tap to play",
-                     SCR_CX, SCR_CY, 152.0f, COL_HINT, 1);
+        // Kept short on purpose. Only about 176 of the 360 px of width are visible
+        // at this height, and the earlier longer wording ("tilt to browse - tap to
+        // play", 209 px) had its ends hidden behind the bezel.
+        gfx::textCentered(g_count > 1 ? "tilt or tap to play" : "tap to play",
+                          330, COL_HINT, 1);
     } else {
         gfx::textCentered(g_games[launching]->name(), SCR_H - 30, COL_LABEL, 2);
     }

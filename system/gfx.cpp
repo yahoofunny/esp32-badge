@@ -203,51 +203,10 @@ float visibleHalfWidth(int y)
     return d2 <= 0.0f ? 0.0f : sqrtf(d2);
 }
 
-void textArc(const char *s, float cx, float cy, float radius, uint16_t color, int scale)
-{
-    if (!s || !*s || radius <= 1.0f) return;
-    if (scale < 1) scale = 1;
+// Arc text was tried here and removed: see the note in gfx.h. It is kept out of
+// the tree rather than left unused, because it looks like it works and quietly
+// mangles the glyphs.
 
-    const int   n       = (int)strlen(s);
-    const float advance = (float)(GLYPH_ADVANCE * scale);   // px measured along the arc
-
-    // Parametrise the arc so that phi = 0 sits at the bottom of the circle and
-    // increasing phi runs to the right along it. At that point the advance
-    // direction is +x and "up" is towards the centre, so the line reads normally
-    // for someone looking at the screen.
-    const float total = n * advance;
-    float phi = -(total - advance) * 0.5f / radius;
-
-    for (const char *p = s; *p; p++, phi += advance / radius) {
-        const unsigned char c = (unsigned char)*p;
-        if (c < FONT_FIRST || c > FONT_LAST) continue;
-        const uint8_t *rows = font8x8[c - FONT_FIRST];
-
-        for (int gx = 0; gx < FONT_CELL; gx++) {
-            // Each column gets its own angle, so the glyph curves with the arc
-            // instead of being a flat stamp slid along it.
-            const float a  = phi + (gx * scale) / radius;
-            const float sa = sinf(a);
-            const float ca = cosf(a);
-            const float bx = cx + radius * sa;
-            const float by = cy + radius * ca;
-
-            // Increasing glyph row must move AWAY from the centre, i.e. downward on
-            // screen. Using the inward direction here mirrors the glyph vertically,
-            // which is exactly what makes arc text read upside down.
-            const float ox = sa;
-            const float oy = ca;
-
-            for (int gy = 0; gy < FONT_CELL; gy++) {
-                if (!(rows[gy] & (0x80 >> gx))) continue;
-                // Centre the 8-row cell on the arc rather than growing outward from
-                // it, so the line reads as sitting on the arc, not hanging off it.
-                const float d = ((float)gy - 3.5f) * scale;
-                pixel((int)lroundf(bx + ox * d), (int)lroundf(by + oy * d), color);
-            }
-        }
-    }
-}
 
 // --- sprites ----------------------------------------------------------------
 void drawSpriteRotated(const Sprite &s, float cx, float cy, float angle,
