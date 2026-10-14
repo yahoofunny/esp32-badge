@@ -134,6 +134,8 @@ system/
 ├── game_clawd.{h,cpp}    tilt-controlled rolling clawd
 ├── game_tap.{h,cpp}      touch-controlled clawd tap
 ├── game_pet.{h,cpp}      the tamagotchi: needs, growth, poking, the scrub game
+├── game_settings.{h,cpp} volume, and what is under the hood
+├── power.{h,cpp}         the BQ27220 fuel gauge
 ├── clawd_sprite.h        the sprite + palette, shared by both games
 ├── assets_clawd.h        generated 2bpp sprite
 ├── assets_icons.h        generated per-app launcher icons
@@ -147,6 +149,17 @@ props stuck onto it: leaning into a roll, one arm raised, ears up. Three copies 
 standing pose, told apart only by the colour of the disc behind them, is not a launcher —
 but neither is a crate or a pair of headphones bolted on, which is what the first
 attempt did and what it looked like on the panel.
+
+The battery sits in the top right, read from the BQ27220 gauge on the I2C bus rather
+than guessed from an ADC pin: it reports a state of charge and a pack voltage, and it
+turns red under 20%.
+
+**SETTINGS** is three pages behind a small arc menu. VOLUME is the assistant's level,
+kept in the NVS key its own AudioCodec::Start() reads — see system/audio.h for why that
+key and not the codec's register, which the assistant rewrites on every boot. SYSTEM is
+the chip, memory, build and battery; NET is what the assistant is configured with. Both
+say plainly that they are read-only and, on NET, that the network belongs to the
+assistant: this firmware never joins one.
 
 **Controls.** Tilt the board left or right to step the carousel — one lean moves one
 place and then latches until the board is level again, so a held tilt does not

@@ -37,6 +37,7 @@
 #include "gfx.h"
 #include "input.h"
 #include "launcher.h"
+#include "power.h"
 
 // ------------------------------------------------------------------- games ---
 // The whole registry. Order is the order they appear on the launcher ring.
@@ -179,12 +180,21 @@ void setup()
     Serial.printf("[audio] after applying the saved level: reg 0x32 = %d (%d%%)\n",
                   audio::rawRegister(), audio::volume());
 
+    // The first battery sample, so the launcher has something to draw immediately and
+    // so a gauge that is not answering is visible in the log rather than only as "--"
+    // on the screen.
+    power::poll(0);
+    const power::Reading batt = power::cached();
+    Serial.printf("[batt] %s: %d%% %d mV\n", batt.valid ? "ok" : "not answering",
+                  batt.percent, batt.millivolts);
+
     launcher::begin(GAMES, GAME_COUNT);
 
     showSplash();
     Serial.println("[sys] splash pushed");
 
     Serial.printf("[esp32-badge] %d screen(s) registered; launcher ready\n", GAME_COUNT);
+
 }
 
 void loop()
@@ -196,6 +206,7 @@ void loop()
     if (dt <= 0.0f || dt > 0.1f) dt = 1.0f / 60.0f;
 
     input::update(dt);
+    power::poll(now);      // the fuel gauge, at most every couple of seconds
     handleBootButton();
 
     int bandY0 = 0;
