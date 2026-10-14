@@ -20,7 +20,7 @@ static const uint16_t COL_ACCENT = PX(RGB565(0x4A, 0x9E, 0xFF));
 
 namespace xiaozhi {
 
-bool switchToStockSystem()
+bool switchToAssistant()
 {
     const esp_partition_t *ota0 = esp_partition_find_first(
         ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
@@ -37,7 +37,8 @@ bool switchToStockSystem()
         return false;
     }
 
-    Serial.println("[xiaozhi] switching to the stock system; power cycle to come back");
+    Serial.println("[xiaozhi] switching to the assistant firmware; "
+                   "long-press BOOT there to come back");
     delay(120);
     esp_restart();
     return true;   // not reached
@@ -79,7 +80,7 @@ void GameXiaoZhi::update(float dt)
 
     t += dt;
     if (t >= SWITCH_DELAY) {
-        if (!xiaozhi::switchToStockSystem()) {
+        if (!xiaozhi::switchToAssistant()) {
             failed = true;
         }
     }
@@ -112,6 +113,6 @@ void GameXiaoZhi::render()
                   SCR_CX + cosf(a1) * 120.0f, SCR_CY + sinf(a1) * 120.0f, COL_ACCENT);
     }
 
-    gfx::textCentered("power cycle to come back", SCR_H - 30, COL_DIM, 1);
+    gfx::textCentered("hold BOOT there to come back", SCR_H - 30, COL_DIM, 1);
     setDirty(0, SCR_H - 1);
 }

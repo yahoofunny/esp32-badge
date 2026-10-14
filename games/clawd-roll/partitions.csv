@@ -1,28 +1,30 @@
-# Partition table for the system firmware.
+# Partition table — the layout Waveshare shipped, with our firmware in the main slot.
 #
-# The layout is arranged around one behaviour of the stock firmware: on every boot
-# it calls esp_ota_set_boot_partition(factory), and for a factory partition ESP-IDF
-# simply *erases otadata* (components/app_update/esp_ota_ops.c -- "if set boot
-# partition to factory bin, just format ota info partition"). With otadata erased
-# the bootloader falls back to factory.
+# This was restored to the original arrangement after a detour. The board already
+# ships with a two-firmware design, and tools/migrate_layout.py had replaced it with
+# a scheme that turned out to be both unnecessary and broken.
 #
-# So the stock firmware's own "always return to factory" habit becomes the way back:
+# What the stock layout actually is, read back from the device dump (both entries
+# verified by their embedded app descriptions):
 #
-#   factory  <- our system      boots by default (otadata erased)
-#   ota_0    <- stock system    selected when our system writes a valid otadata
+#   factory  0x020000  6.88MB   01_factory  (IDF 5.5.3)  -- the main application
+#   ota_0    0x6c0000  4.00MB   xiaozhi 2.2.4 (IDF 5.5.2) -- a SECOND, standalone
+#                                 firmware, not an empty OTA slot
 #
-# Tapping XIAOZHI in the launcher writes otadata selecting ota_0 and restarts, which
-# lands in the stock system with the real XiaoZhi app. That system then immediately
-# pins the boot target back to factory, so the next power cycle returns here. Neither
-# direction needs a host computer.
+# `ota_0` is not spare space: it holds the XiaoZhi voice assistant as a complete
+# firmware. The main application switches to it by writing otadata and rebooting
+# (its log reads "APP_SWITCH: 成功设置sub_app为启动分区，即将重启..."), and the
+# XiaoZhi firmware switches back by setting `factory` as the boot partition
+# ("已设置 factory 为启动分区 重启回到主程序"). Overwriting ota_0 destroys the
+# assistant and makes that switch loop forever.
 #
-# `assets` deliberately keeps the offset it had in the stock layout, so migrating
-# does not require copying those 4 MB anywhere.
+# So the arrangement is simply: our launcher in `factory`, XiaoZhi left where
+# Waveshare put it. The round trip is entirely on-device — no host, no power cycle.
 #
 # Name,   Type, SubType, Offset,   Size,     Flags
 nvs,      data, nvs,     0x9000,   0x4000,
 otadata,  data, ota,     0xd000,   0x2000,
 phy_init, data, phy,     0xf000,   0x1000,
-factory,  app,  factory, 0x20000,  0x100000,
-ota_0,    app,  ota_0,   0x120000, 0x9A0000,
+factory,  app,  factory, 0x20000,  0x692000,
+ota_0,    app,  ota_0,   0x6c0000, 0x400000,
 assets,   data, spiffs,  0xac0000, 0x400000,

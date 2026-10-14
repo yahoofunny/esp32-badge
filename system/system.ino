@@ -90,7 +90,7 @@ static void handleBootButton()
             Serial.println("[sys] back to the launcher");
         } else {
             Serial.println("[sys] handing over to the stock system");
-            xiaozhi::switchToStockSystem();
+            xiaozhi::switchToAssistant();
         }
     }
 }

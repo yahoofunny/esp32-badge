@@ -236,7 +236,7 @@ The launcher is what boots by default, because erased otadata falls back to `fac
 python tools/switch_slot.py home     # boot our system (erases otadata)
 python tools/switch_slot.py stock    # boot the stock system (selects ota_0)
 python tools/switch_slot.py status   # report what is currently selected
-python tools/migrate_layout.py       # re-apply the layout swap; --dry-run to preview
+python tools/install_stack.py       # (re)install our launcher + the assistant; --dry-run to preview
 ```
 
 `assets` deliberately keeps the offset the stock layout gave it, so the swap never has

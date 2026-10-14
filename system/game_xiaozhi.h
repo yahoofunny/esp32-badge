@@ -2,7 +2,7 @@
 
 #include "game.h"
 
-// Hands the board over to the stock system, which is where the real XiaoZhi
+// Hands the board over to the XiaoZhi assistant, which ships as its own firmware
 // assistant lives.
 //
 // Not a game at all: it is a screen that performs the switch and then restarts. It
@@ -12,7 +12,7 @@ namespace xiaozhi {
 
 // Writes an otadata entry selecting ota_0 and restarts. Returns false if the slot or
 // the image is unusable, in which case the caller should stay put.
-bool switchToStockSystem();
+bool switchToAssistant();
 
 }  // namespace xiaozhi
 
