@@ -4,13 +4,14 @@
 
 // Settings, which on this badge means the volume.
 //
-// The level is written into the ES8311 codec, which has no reset line on this board,
-// so it survives resets and slot switches. That was the hope for reaching the
-// assistant too, and it does not work: measured on the device, the assistant writes
-// this same register itself on every boot (25% set here came back as 66%), and it
-// keeps no copy in NVS -- so its level is compiled into its firmware. This control
-// therefore covers anything of ours that makes a sound, and cannot reach the
-// assistant. The screen says so rather than implying otherwise.
+// The level shown and set here is the assistant's, kept in the NVS key its own
+// AudioCodec::Start() reads at boot ("audio"/"output_volume"). See audio.h for why
+// that key and not the codec's register: the register is rewritten by the assistant
+// on every boot, so writing it reaches nothing.
+//
+// The codec's register is shown underneath as well. It is not the control -- it is the
+// evidence, since it is what the assistant's own conversion of the level produced, and
+// there is no other way to see whether the level took.
 //
 // The screen shows the codec's raw register as well as the percentage. There is no
 // other way to see it, and it is the evidence for whether the level is really being
@@ -28,11 +29,11 @@ public:
     void render() override;
 
 private:
-    int  shown = -1;        // the level as last read from the codec
-    int  raw = -1;          // its raw register, for the readout
-    bool present = false;   // did the codec answer at all
+    int  shown = -1;        // the assistant's level, from NVS
+    int  raw = -1;          // the codec's register, for the readout
+    bool saved = true;      // did the last write read back correctly
     bool dragging = false;
 
-    void readCodec();
+    void refresh();
     void apply(int percent);
 };

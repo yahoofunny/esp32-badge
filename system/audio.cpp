@@ -102,4 +102,35 @@ void applyStored()
     setVolume(v);
 }
 
+// The assistant's own namespace and key, written exactly as its Settings class reads
+// them: nvs_open("audio") and nvs_get_i32("output_volume").
+static const char *ASSISTANT_NAMESPACE = "audio";
+static const char *ASSISTANT_KEY = "output_volume";
+
+int assistantVolume()
+{
+    Preferences prefs;
+    if (!prefs.begin(ASSISTANT_NAMESPACE, true)) return ASSISTANT_DEFAULT;
+    const int v = prefs.getInt(ASSISTANT_KEY, ASSISTANT_DEFAULT);
+    prefs.end();
+    return v;
+}
+
+bool setAssistantVolume(int percent)
+{
+    if (percent < ASSISTANT_MIN) percent = ASSISTANT_MIN;
+    if (percent > VOLUME_MAX) percent = VOLUME_MAX;
+
+    Preferences prefs;
+    if (!prefs.begin(ASSISTANT_NAMESPACE, false)) return false;
+    const size_t written = prefs.putInt(ASSISTANT_KEY, percent);
+    prefs.end();
+    if (written == 0) return false;
+
+    // Read it back through the same path the assistant will use. The pet's save
+    // taught this lesson: a write that reports success and a value that is not there
+    // look identical until something reads it.
+    return assistantVolume() == percent;
+}
+
 }  // namespace audio

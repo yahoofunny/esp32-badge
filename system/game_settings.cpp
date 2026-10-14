@@ -35,39 +35,42 @@ static float knobX(int percent)
     return BAR_X0 + (BAR_X1 - BAR_X0) * (float)percent / (float)audio::VOLUME_MAX;
 }
 
-void GameSettings::readCodec()
+void GameSettings::refresh()
 {
+    shown = audio::assistantVolume();
     raw = audio::rawRegister();
-    present = raw >= 0;
-    shown = audio::volume();
-    if (shown < 0) shown = 0;
 }
 
 void GameSettings::apply(int percent)
 {
-    if (percent < audio::VOLUME_MIN) percent = audio::VOLUME_MIN;
+    if (percent < audio::ASSISTANT_MIN) percent = audio::ASSISTANT_MIN;
     if (percent > audio::VOLUME_MAX) percent = audio::VOLUME_MAX;
-    if (!audio::setVolume(percent)) {
-        present = false;
-        return;
-    }
-    // Read back rather than trusting the write: a codec that is not answering, or a
-    // register that did not take, would otherwise look exactly like a level that was
-    // set. The pet's save learned this the same way.
-    present = audio::verify(percent);
+
+    // Two writes for two different readers. The NVS key is what the assistant picks up
+    // when it next starts -- that is the one that matters. The codec register is for
+    // anything of ours that would make a sound before then; the two use different
+    // scales, so each gets its own call rather than one being derived from the other.
+    //
+    // Both are read back rather than trusted: a write that reports success and a value
+    // that is not there look identical until something reads it. The pet's save
+    // taught this the same way.
+    saved = audio::setAssistantVolume(percent);
+    audio::storeVolume(percent);
+    audio::setVolume(percent);
+    audio::verify(percent);
     shown = percent;
     raw = audio::rawRegister();
-    audio::storeVolume(percent);
-    Serial.printf("[audio] volume -> %d%% (reg 0x32 = %d, %s)\n", percent, raw,
-                  present ? "verified" : "NOT VERIFIED");
+    Serial.printf("[audio] volume -> %d%% (nvs %s, codec reg 0x32 = %d)\n", percent,
+                  saved ? "verified" : "NOT SAVED", raw);
 }
 
 void GameSettings::enter()
 {
-    readCodec();
+    refresh();
+    saved = true;
     dragging = false;
-    Serial.printf("[audio] settings opened: codec reg 0x32 = %d (%d%%), %s\n",
-                  raw, shown, present ? "present" : "NOT ANSWERING");
+    Serial.printf("[audio] settings opened: assistant level %d%% (nvs), "
+                  "codec reg 0x32 = %d\n", shown, raw);
     setDirty(0, SCR_H - 1);
 }
 
@@ -130,9 +133,9 @@ void GameSettings::render()
 
     char buf[16];
     snprintf(buf, sizeof(buf), "%d%%", shown < 0 ? 0 : shown);
-    gfx::textCentered(buf, VALUE_Y, present ? COL_TEXT : COL_DIM, VALUE_SCALE);
-    if (!present) {
-        gfx::textCentered("codec not answering", VALUE_Y + 40, COL_DIM, 1);
+    gfx::textCentered(buf, VALUE_Y, COL_TEXT, VALUE_SCALE);
+    if (!saved) {
+        gfx::textCentered("could not save", VALUE_Y + 40, COL_DIM, 1);
     }
 
     // The bar, and the knob on it. The filled part is the level, so the picture and
@@ -149,7 +152,9 @@ void GameSettings::render()
     gfx::fillCircle(knobX(shown < 0 ? 0 : shown), y + BAR_H / 2.0f, (float)(KNOB_R - 4),
                     gfx::dim(COL_ACCENT, 0.55f));
 
-    // The register both firmwares are sharing. There is nowhere else to see it.
+    // Not the control -- the evidence. This is the register the assistant writes from
+    // the level above, on its own scale, so after it has booted the two numbers move
+    // together and this one shows whether the level reached it.
     snprintf(buf, sizeof(buf), "codec 0x32 = %d", raw);
     gfx::textCentered(buf, REG_Y, COL_DIM, 1);
 
@@ -162,11 +167,7 @@ void GameSettings::render()
         if (i == 1) gfx::fillRect(bx[i] - 2, BTN_Y - 10, 4, 21, c);
     }
 
-    // Not "shared with the assistant": measured on the device, the assistant writes
-    // this same register itself on every boot, and its level is compiled into its
-    // firmware with no copy in NVS. So the level here is for anything of ours that
-    // makes a sound, and saying otherwise would be a control that lies.
-    gfx::textCentered("assistant keeps its own level", HINT_Y, COL_DIM, 1);
+    gfx::textCentered("assistant reads this at boot", HINT_Y, COL_DIM, 1);
 }
 
 void GameSettings::drawIcon(float cx, float cy, float size) const

@@ -44,10 +44,31 @@ int rawRegister();
 
 // The level is remembered across a power cycle, where the codec's own registers are
 // not: with the battery out the codec comes up at its power-on default. So the value
-// is kept in NVS as well and written back into the codec at startup -- which is what
-// the stock system did, and why its setting survived being turned off.
+// is kept in NVS as well and written back into the codec at startup.
 int  storedVolume();              // -1 when nothing has been stored
 void storeVolume(int percent);
 void applyStored();               // no-op when nothing has been stored
+
+// --- the assistant's level ------------------------------------------------------
+//
+// This is the one that matters, and it is not the codec register. The assistant in
+// the other slot writes that register itself, every time it boots, from a level it
+// reads out of NVS:
+//
+//     AudioCodec::Start():  output_volume_ = settings.GetInt("output_volume", 70);
+//     (namespace "audio", one int32, defaulting to 70 when the key is absent)
+//
+// Measured on the device: a value written to the codec alone came back changed after
+// the assistant had booted, and a dump of the whole NVS partition showed no "audio"
+// namespace at all -- because nothing had ever set one. So writing that key is the
+// way in, and it is the assistant's own documented interface rather than a trick on
+// top of it: its SetOutputVolume persists to the same place.
+//
+// Its own range is 0..100 and it treats 0 as 10, so the floor here is 10.
+constexpr int ASSISTANT_MIN = 10;
+constexpr int ASSISTANT_DEFAULT = 70;    // what it uses when the key is absent
+
+int  assistantVolume();                  // NVS value, or ASSISTANT_DEFAULT
+bool setAssistantVolume(int percent);    // writes and reads back
 
 }  // namespace audio
