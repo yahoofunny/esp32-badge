@@ -162,15 +162,21 @@ def draw_emote(px, emote, x, y):
         draw_text(px, FONT, "z", x + 8, y, COL_DIM, 1)
 
 
-def draw_pet(px, stage, mood, cx=PET_CX, cy=PET_CY):
+def draw_pet(px, stage, mood, cx=PET_CX, cy=PET_CY, look=(0, 0)):
+    """`look` is the glance offset, in the same units as lookX/lookY: up to about 5 px
+    towards wherever the finger is."""
     eyes, emote, mouth, _bob = MOODS[mood]
     sprite = SPRITES[STAGE_NAMES[stage].lower()]
     w, h, _, _, eye_dx, eye_dy, eye_r = sprite
     top = cy - h // 2
     draw_pet_body(px, PAL, sprite, cx, cy)
-    ey = cy + eye_dy
-    draw_eye(px, cx - eye_dx, ey, eye_r, eyes, INK, +1)
-    draw_eye(px, cx + eye_dx, ey, eye_r, eyes, INK, -1)
+    # The glance is added after the eyes are placed either side of the centre, so both
+    # move the same way. Folding it into eye_dx instead sends them in opposite
+    # directions, which is the bug this preview never showed because it used to draw
+    # the eyes centred and ignore the glance entirely.
+    ey = cy + eye_dy + look[1]
+    draw_eye(px, cx - eye_dx + look[0], ey, eye_r, eyes, INK, +1)
+    draw_eye(px, cx + eye_dx + look[0], ey, eye_r, eyes, INK, -1)
     if mouth:
         draw_mouth(px, cx, ey + eye_r * 2, eye_r, INK)
     if emote:
@@ -289,7 +295,7 @@ def screen(args):
     else:
         draw_chrome(px, args.stage, args.hunger, args.energy, args.happy,
                     args.clean, args.health)
-        draw_pet(px, args.stage, args.anim)
+        draw_pet(px, args.stage, args.anim, look=args.look)
         draw_thought(px, args.thought)
         draw_menu(px)
     apply_bezel(img)
@@ -330,9 +336,12 @@ def main():
     ap.add_argument("--happy", type=float, default=81)
     ap.add_argument("--clean", type=float, default=45)
     ap.add_argument("--health", type=float, default=70)
+    ap.add_argument("--look", default="0,0",
+                    help="glance offset in px, e.g. '5,0' looks right")
     ap.add_argument("--thought", default="just hanging out")
     ap.add_argument("--out", default="build/preview/pet_state.png")
     args = ap.parse_args()
+    args.look = tuple(int(v) for v in args.look.split(","))
     args.out = os.path.join(ROOT, args.out)
     (screen if args.screen else sheet)(args)
     return 0

@@ -609,10 +609,13 @@ void GamePet::drawPet()
     if (anim == ANIM_IDLE && (animFrame % 4) == 3) eyes = EYE_SHUT;
 
     const uint16_t ink = PX(pet_palette[2]);
-    // eyeDX is the distance from the sprite's centre to one eye, not a coordinate.
-    const int off = s.eyeDX + lx;
-    drawEye(cx - off, ey, s.eyeR, eyes, ink, +1);
-    drawEye(cx + off, ey, s.eyeR, eyes, ink, -1);
+    // eyeDX is the distance from the sprite's centre to one eye, not a coordinate,
+    // and the glance is added after that placement rather than folded into it. Adding
+    // it to the distance instead moved the left eye by -lx and the right by +lx: the
+    // two eyes slid apart as the finger moved, which reads as a squint rather than as
+    // looking at it.
+    drawEye(cx - s.eyeDX + lx, ey, s.eyeR, eyes, ink, +1);
+    drawEye(cx + s.eyeDX + lx, ey, s.eyeR, eyes, ink, -1);
     if (m.mouth) drawMouth(cx + lx / 2, ey + s.eyeR * 2, s.eyeR, ink);
 
     // The mood mark sits at the pet's shoulder, clear of the meters above.
