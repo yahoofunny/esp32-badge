@@ -396,6 +396,17 @@ header. Details in [docs/hardware.md](docs/hardware.md).
 - [ ] Badge assets: animated frames from SD card or the SPIFFS assets partition
 - [ ] Optional: rebuild and extend the stock Brookesia system with ESP-IDF
 
+## License
+
+**AGPL-3.0** — see [LICENSE](LICENSE), and [NOTICE.md](NOTICE.md) for the third-party
+material this repository carries and its terms.
+
+The short version of why that licence: the clawd artwork comes from an AGPL-3.0
+project, so shipping the source under anything more permissive would not have been
+consistent. If the artwork is replaced with something original the obligation goes
+with it. The board drivers are Apache-2.0 (compatible), and the pet's design follows
+an MIT project without copying its code.
+
 ## Links
 
 - [Waveshare docs](https://docs.waveshare.net/ESP32-S3-Touch-LCD-1.85B)
