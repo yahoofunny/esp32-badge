@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Render a mock of the pet screen so its layout can be checked offline.
 
-Mirrors the constants in system/game_pet.cpp. If you change the layout there, change
-it here too -- the point is to see the round-bezel clipping before flashing rather
-than after.
+Mirrors the drawing in system/game_pet.cpp: the monochrome LCD look, the two heart
+meters, the sprite in a single ink colour with the eyes punched out, and the row of
+action pictograms with the selected tile inverted.
 
-    tools/preview_pet.py [--stage 3] [--asleep] [--out build/preview-pet.png]
+If you change the layout there, change it here too -- the point is to see round-bezel
+clipping and the overall composition before flashing rather than after.
+
+    tools/preview_pet.py [--stage 1|2|3] [--asleep] [--sick] [--poop] [--selected N]
 """
 
 import argparse
@@ -17,136 +20,182 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from previewlib import (SCR_W, SCR_H, CX, CY, load_font, load_pet_sprites,  # noqa: E402
-                        draw_text, text_centered, text_width, visible_half_width,
-                        draw_pet_sprite, apply_bezel, finish)
+                        text_centered, text_width, visible_half_width,
+                        apply_bezel, finish)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # --- must match system/game_pet.cpp -----------------------------------------
-BAR_X, BAR_W, BAR_H = 124, 116, 7
-BAR_Y0, BAR_PITCH = 30, 14
-PET_CX, PET_CY, PET_SCALE = 180.0, 168.0, 6.0
-MSG_Y = 234
-BTN_R = 20.0
-BTN_ROW1_Y, BTN_ROW2_Y, BTN_PITCH = 268.0, 310.0, 46.0
+LCD_BG = (0xA8, 0xB4, 0x8C)
+LCD_INK = (0x1A, 0x1E, 0x14)
+LCD_DIM = (0x7E, 0x8A, 0x66)
 
-COL_BG = (0x0B, 0x0B, 0x12)
-COL_DOT = (0x18, 0x18, 0x2A)
-COL_TRACK = (0x20, 0x20, 0x32)
-COL_TEXT = (0xD8, 0xD8, 0xE8)
-COL_DIM = (0x6A, 0x6A, 0x86)
-BAR_COLS = [(0xE8, 0x9B, 0x3C), (0x5A, 0x9E, 0xE8), (0x4C, 0xC4, 0x7A), (0xC8, 0x6B, 0xD8)]
-BTN_COLS = [(0x4C, 0xC4, 0x7A), (0xC8, 0xA0, 0x4C), (0xE8, 0x6B, 0xA0), (0x4C, 0x9E, 0xE8),
-            (0x9C, 0x7A, 0x4C), (0xE0, 0x50, 0x50), (0x8A, 0x6B, 0xD8)]
-BTN_LABELS = ["FEED", "SNACK", "PLAY", "WASH", "CLEAN", "MED", "SLEEP"]
+HEART_TOTAL, HEART_PITCH, HEART_Y = 4, 13, 52
+HEART_LEFT_X, HEART_RIGHT_X = 62, 259
+
+PET_CX, PET_CY = 180.0, 172.0
+MSG_Y = 266
+
+ICON_PITCH, ICON_Y, ICON_HALF = 33, 300, 13
+
 STAGE_NAMES = ["EGG", "BABY", "TEEN", "ADULT"]
+SPRITE_NAME = ["egg", "baby", "teen", "adult"]
+SPRITE_SLEEP = ["egg", "babySleep", "teenSleep", "adultSleep"]
+SPRITE_W = {"egg": 16, "baby": 16, "teen": 16, "adult": 20}
 
 
-def dim(c, k):
-    return tuple(int(v * (1 - k)) for v in c)
-
-
-def fill_rect(px, x, y, w, h, col):
+def rect(px, x, y, w, h, c):
+    x, y, w, h = int(round(x)), int(round(y)), int(round(w)), int(round(h))
     for yy in range(max(0, y), min(SCR_H, y + h)):
         for xx in range(max(0, x), min(SCR_W, x + w)):
-            px[xx, yy] = col
+            px[xx, yy] = c
 
 
-def disc(px, cx, cy, r, col, outline=None, ring=2):
+def disc(px, cx, cy, r, c):
     for yy in range(int(cy - r), int(cy + r) + 1):
         for xx in range(int(cx - r), int(cx + r) + 1):
-            if not (0 <= xx < SCR_W and 0 <= yy < SCR_H):
+            if 0 <= xx < SCR_W and 0 <= yy < SCR_H and math.hypot(xx - cx, yy - cy) <= r:
+                px[xx, yy] = c
+
+
+# --- pictograms, mirroring the glyph_* functions in the firmware -------------
+def g_bowl(px, cx, cy, c):
+    rect(px, cx - 5, cy - 1, 10, 1, c)
+    for i in range(9):
+        rect(px, cx - 4 + i, cy + abs(i - 4) // 2, 1, 3, c)
+
+
+def g_candy(px, cx, cy, c):
+    disc(px, cx, cy, 3.5, c)
+    rect(px, cx - 6, cy - 1, 3, 2, c)
+    rect(px, cx + 4, cy - 1, 3, 2, c)
+
+
+def g_ball(px, cx, cy, c):
+    disc(px, cx, cy, 4.5, c)
+
+
+def g_drop(px, cx, cy, c):
+    for i in range(8):
+        rect(px, cx - i // 2, cy - 4 + i, 1 + i, 1, c)
+
+
+def g_broom(px, cx, cy, c):
+    rect(px, cx, cy - 6, 1, 6, c)
+    for i in range(5):
+        rect(px, cx - 3 + i, cy + i // 2, 7 - i, 1, c)
+
+
+def g_cross(px, cx, cy, c):
+    rect(px, cx - 1, cy - 4, 3, 9, c)
+    rect(px, cx - 4, cy - 1, 9, 3, c)
+
+
+def g_zzz(px, cx, cy, c):
+    rect(px, cx - 4, cy - 3, 7, 1, c)
+    rect(px, cx + 2, cy - 2, 1, 1, c)
+    rect(px, cx - 3, cy - 1, 7, 1, c)
+    rect(px, cx - 3, cy + 2, 7, 1, c)
+
+
+GLYPHS = [g_bowl, g_candy, g_ball, g_drop, g_broom, g_cross, g_zzz]
+GLYPH_NAMES = ["feed", "snack", "play", "wash", "clean", "med", "sleep"]
+
+
+def stage_scale(stage):
+    return 6 if stage >= 3 else (5 if stage == 2 else 4)
+
+
+def draw_heart(px, cx, cy, filled):
+    c = LCD_INK if filled else LCD_DIM
+    disc(px, cx - 2, cy - 1, 2.2, c)
+    disc(px, cx + 2, cy - 1, 2.2, c)
+    for i in range(5):
+        rect(px, cx - 3 + i, cy + 1 + i, 7 - 2 * i, 1, c)
+
+
+def draw_pet(px, sprite, scale):
+    w, h, rb, data = sprite
+    bo = int(round(scale))
+    ox, oy = PET_CX - w * scale / 2, PET_CY - h * scale / 2
+    for y in range(h):
+        for x in range(w):
+            idx = (data[y * rb + (x >> 1)] >> ((x & 1) * 4)) & 0x0F
+            if not idx:
                 continue
-            d = math.hypot(xx - cx, yy - cy)
-            if d <= r - ring:
-                px[xx, yy] = col
-            elif outline and d <= r:
-                px[xx, yy] = outline
+            rect(px, ox + x * scale, oy + y * scale, bo, bo,
+                 LCD_INK if idx == 1 else LCD_BG)
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--stage", type=int, default=3)
+    ap.add_argument("--stage", type=int, default=2)
     ap.add_argument("--asleep", action="store_true")
-    ap.add_argument("--hunger", type=float, default=42)
-    ap.add_argument("--fun", type=float, default=38)
-    ap.add_argument("--clean", type=float, default=68)
-    ap.add_argument("--energy", type=float, default=74)
+    ap.add_argument("--hunger", type=float, default=35)
+    ap.add_argument("--fun", type=float, default=58)
     ap.add_argument("--sick", action="store_true")
     ap.add_argument("--poop", action="store_true")
+    ap.add_argument("--selected", type=int, default=-1)
+    ap.add_argument("--age", default="02:14")
     ap.add_argument("--out", default=os.path.join(ROOT, "build", "preview-pet.png"))
     ap.add_argument("--scale", type=int, default=2)
     args = ap.parse_args()
 
     font = load_font(os.path.join(ROOT, "system", "assets_font.h"))
-    pal, sprites = load_pet_sprites(os.path.join(ROOT, "system", "assets_pet.h"))
+    _, sprites = load_pet_sprites(os.path.join(ROOT, "system", "assets_pet.h"))
 
-    img = Image.new("RGB", (SCR_W, SCR_H), COL_BG)
+    img = Image.new("RGB", (SCR_W, SCR_H), LCD_BG)
     px = img.load()
-    for y in range(22, SCR_H, 45):
-        for x in range(22, SCR_W, 45):
-            fill_rect(px, x, y, 2, 2, COL_DOT)
 
-    # stat bars -- hunger and boredom are drawn inverted, as the firmware does
-    vals = [args.hunger, args.fun, args.clean, args.energy]
-    for i, v in enumerate(vals):
-        y = BAR_Y0 + i * BAR_PITCH
-        fill_rect(px, BAR_X - 12, y, 8, 7, dim(BAR_COLS[i], 0.4))
-        fill_rect(px, BAR_X, y, BAR_W, BAR_H, COL_TRACK)
-        frac = (100 - v) / 100 if i < 2 else v / 100
-        fill_rect(px, BAR_X, y, int(BAR_W * frac + 0.5), BAR_H, BAR_COLS[i])
+    hh = int(round((100 - args.hunger) / (100 / HEART_TOTAL)))
+    fh = int(round((100 - args.fun) / (100 / HEART_TOTAL)))
+    for i in range(HEART_TOTAL):
+        draw_heart(px, HEART_LEFT_X + i * HEART_PITCH, HEART_Y, i < hh)
+        draw_heart(px, HEART_RIGHT_X + i * HEART_PITCH, HEART_Y, i < fh)
 
-    age = 402
-    head = f"{STAGE_NAMES[args.stage]}  {age // 60:02d}:{age % 60:02d}"
-    text_centered(px, font, head, 92, COL_DIM, 1)
+    head = f"{STAGE_NAMES[args.stage]}  {args.age}"
+    text_centered(px, font, head, 84, LCD_INK, 1)
 
-    name = ["egg", "baby", "teen", "adult"][args.stage]
-    if args.asleep and args.stage != 0:
-        name = ["egg", "babySleep", "teenSleep", "adultSleep"][args.stage]
-    draw_pet_sprite(px, pal, sprites[name], PET_CX, PET_CY, PET_SCALE)
+    name = SPRITE_SLEEP[args.stage] if (args.asleep and args.stage != 0) else SPRITE_NAME[args.stage]
+    draw_pet(px, sprites[name], stage_scale(args.stage))
 
     if args.poop:
-        fill_rect(px, int(PET_CX) + 74, int(PET_CY) + 30, 13, 9, (0x9C, 0x7A, 0x4C))
+        disc(px, PET_CX + 84, PET_CY + 32, 5, LCD_INK)
+        rect(px, PET_CX + 79, PET_CY + 37, 11, 2, LCD_INK)
     if args.sick:
-        disc(px, PET_CX - 82, PET_CY + 33, 7, (0xE0, 0x50, 0x50))
+        g_cross(px, PET_CX - 84, PET_CY + 32, LCD_INK)
 
-    text_centered(px, font, "clawd played until it puffed", MSG_Y, COL_TEXT, 1)
+    text_centered(px, font, "clawd played until it puffed", MSG_Y, LCD_INK, 1)
 
-    # buttons: 4 on the first row, 3 on the second
-    coords = []
-    for i in range(4):
-        coords.append((PET_CX + (i - 1.5) * BTN_PITCH, BTN_ROW1_Y, i, True))
-    for i in range(3):
-        enabled = {0: args.poop, 1: args.sick}.get(i, True)   # clean, med
-        coords.append((PET_CX + (i - 1.0) * BTN_PITCH, BTN_ROW2_Y, 4 + i, enabled))
-    for cx, cy, idx, enabled in coords:
-        c = BTN_COLS[idx] if enabled else dim(BTN_COLS[idx], 0.72)
-        disc(px, cx, cy, BTN_R, dim(c, 0.78), outline=c, ring=2)
-        lab = BTN_LABELS[idx]
-        draw_text(px, font, lab, int(cx - text_width(font, lab, 1) * 0.5), int(cy - 3),
-                  COL_TEXT if enabled else COL_DIM, 1)
+    x0 = CX - (len(GLYPHS) - 1) * ICON_PITCH / 2
+    for i, fn in enumerate(GLYPHS):
+        cx = x0 + i * ICON_PITCH
+        if i == args.selected:
+            rect(px, cx - ICON_HALF, ICON_Y - ICON_HALF,
+                 2 * ICON_HALF + 1, 2 * ICON_HALF + 1, LCD_INK)
+            fn(px, cx, ICON_Y, LCD_BG)
+        else:
+            fn(px, cx, ICON_Y, LCD_INK)
 
     apply_bezel(img)
     finish(img, args.out, args.scale)
 
     print()
     print("placement check (needs half-width <= visible half-width - 2):")
-    def check(label, cy, half_w):
-        hw = visible_half_width(cy)
-        ok = half_w <= hw - 2
-        print(f"  {label:26s} needs {half_w:6.1f}  visible {hw:6.1f}  -> "
-              f"{'fits' if ok else 'CLIPPED'}")
 
-    check("stat bars (right end)", BAR_Y0 + 3 * BAR_PITCH + BAR_H - 1, BAR_X + BAR_W - CX)
-    check("stat bar swatches", BAR_Y0 + 3 * BAR_PITCH + BAR_H - 1, CX - (BAR_X - 12))
-    for cx, cy, idx, _ in coords:
-        check(f"button {BTN_LABELS[idx]}", int(cy + BTN_R), abs(cx - CX) + BTN_R)
+    def check(label, row, half):
+        hw = visible_half_width(row)
+        print(f"  {label:22s} needs {half:6.1f}  visible {hw:6.1f}  -> "
+              f"{'fits' if half <= hw - 2 else 'CLIPPED'}")
+
+    check("heart meters", HEART_Y + 6,
+          max(CX - HEART_LEFT_X, HEART_RIGHT_X + 3 * HEART_PITCH - CX))
+    check("age line", 84 + 7, text_width(font, head, 1) / 2)
     check("message line", MSG_Y + 7, text_width(font, "clawd played until it puffed", 1) / 2)
-    check("age line", 92 + 7, text_width(font, head, 1) / 2)
-    hw = visible_half_width(int(PET_CY) - int(18 * PET_SCALE / 2))
-    print(f"  {'pet sprite':26s} needs {20 * PET_SCALE / 2:6.1f}  visible {hw:6.1f}  -> "
-          f"{'fits' if 20 * PET_SCALE / 2 <= hw else 'CLIPPED'}")
+    check("icon row", ICON_Y + ICON_HALF, abs(x0 - CX) + ICON_HALF)
+    check("pet sprite", int(PET_CY + SPRITE_W[SPRITE_NAME[args.stage]] * stage_scale(args.stage) / 2),
+          SPRITE_W[SPRITE_NAME[args.stage]] * stage_scale(args.stage) / 2)
     return 0
 
 

@@ -98,10 +98,16 @@ private:
     void save();
 
     // --- presentation -------------------------------------------------------
-    void drawBars();
-    void drawButtons();
-    void layoutButtons(float *xs, float *ys, float *radii, bool *enabled, int *count) const;
+    // The app is dressed as the original Tamagotchi's monochrome LCD rather than in
+    // the system's dark theme: everything is drawn in one ink colour on a grey-green
+    // background, needs are heart meters, and the actions are a row of pictograms.
+    void drawHeart(int cx, int cy, bool filled);
+    void drawHearts(int x, int y, int filled, int total);
+    void drawHeartMeters();
     void drawPetSprite();
+    void drawIconRow();
+    void layoutIcons(float *xs, float *ys, float *halfSizes, bool *enabled, int *count) const;
+    int  stageScale() const;
 
     char     msg[40] = {0};
     uint32_t msgAgeMs = 0;
