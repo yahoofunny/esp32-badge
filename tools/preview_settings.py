@@ -34,6 +34,21 @@ def constants(path):
     for m in re.finditer(r"static const uint16_t (\w+)\s*=\s*PX\(RGB565\((0x[0-9A-Fa-f]+), "
                          r"(0x[0-9A-Fa-f]+), (0x[0-9A-Fa-f]+)\)\)", src):
         out[m.group(1)] = tuple(int(m.group(i), 16) for i in (2, 3, 4))
+    # Every label, read out of the firmware rather than copied: the hint line under the
+    # -/+ buttons was already stale here once, which is the whole reason this preview
+    # parses instead of mirroring.
+    for name, pat in [("HEAD", r'textCentered\("([^"]+)"'),
+                      ("LABEL", r'textCentered\("([^"]+)", LABEL_Y'),
+                      ("HINT", r'textCentered\("([^"]+)", HINT_Y'),
+                      ("NOCODEC", r'textCentered\("([^"]+)"\s*,?\s*VALUE_Y \+ 40')]:
+        m = re.search(pat, src)
+        if m:
+            out[name] = m.group(1)
+    # The register line's format specifically: the first snprintf in the file is the
+    # percentage, so matching the first one grabs the wrong string.
+    m = re.search(r'snprintf\(buf, sizeof\(buf\), "([^"]*0x32[^"]*)"', src)
+    if m:
+        out["REG_FMT"] = m.group(1)
     return out
 
 
@@ -71,21 +86,24 @@ def main():
                     rect(xx, yy, 1, 1, c)
 
     def ring(cx, cy, r, c, t=2.0):
-        steps = max(48, int(r * 8))
+        """Solid, the way gfx::strokeCircle draws it -- iterating the bounding box
+        rather than stepping round the circle, which left gaps."""
         import math
-        for k in range(steps):
-            a = 2 * math.pi * k / steps
-            for o in range(int(t)):
-                disc(cx + math.cos(a) * (r - o), cy + math.sin(a) * (r - o), 0.5, c)
+        for yy in range(int(cy - r - t), int(cy + r + t) + 1):
+            for xx in range(int(cx - r - t), int(cx + r + t) + 1):
+                d = math.hypot(xx - cx, yy - cy)
+                if r - t <= d <= r:
+                    rect(xx, yy, 1, 1, c)
 
     accent, dim, text = K["COL_ACCENT"], K["COL_DIM"], K["COL_TEXT"]
-    text_centered(px, font, "SETTINGS", K["HEAD_Y"], accent, 1)
-    text_centered(px, font, "VOLUME", K["LABEL_Y"], dim, 1)
+    text_centered(px, font, K["HEAD"], K["HEAD_Y"], accent, 1)
+    text_centered(px, font, K["LABEL"], K["LABEL_Y"], dim, 1)
     shown = 0 if args.no_codec else args.volume
     text_centered(px, font, "%d%%" % shown, K["VALUE_Y"],
                   dim if args.no_codec else text, K["VALUE_SCALE"])
     if args.no_codec:
-        text_centered(px, font, "codec not answering", K["VALUE_Y"] + 40, dim, 1)
+        text_centered(px, font, K.get("NOCODEC", "codec not answering"),
+                      K["VALUE_Y"] + 40, dim, 1)
 
     y = K["BAR_Y"]
     rect(K["BAR_X0"], y, K["BAR_X1"] - K["BAR_X0"], K["BAR_H"], K["COL_TRACK"])
@@ -98,14 +116,14 @@ def main():
     disc(kx, y + K["BAR_H"] / 2, K["KNOB_R"], accent)
     disc(kx, y + K["BAR_H"] / 2, K["KNOB_R"] - 4, tuple(int(v * 0.55) for v in accent))
 
-    text_centered(px, font, "codec 0x32 = %d" % (0 if args.no_codec else raw),
-                  K["REG_Y"], dim, 1)
+    text_centered(px, font, K["REG_FMT"] % (0 if args.no_codec else raw), K["REG_Y"],
+                  dim, 1)
     for i, bx in enumerate((K["BTN_A_X"], K["BTN_B_X"])):
         ring(bx, K["BTN_Y"], K["BTN_R"], accent)
         rect(bx - 10, K["BTN_Y"] - 2, 21, 4, accent)
         if i:
             rect(bx - 2, K["BTN_Y"] - 10, 4, 21, accent)
-    text_centered(px, font, "shared with the assistant", K["HINT_Y"], dim, 1)
+    text_centered(px, font, K["HINT"], K["HINT_Y"], dim, 1)
 
     apply_bezel(img)
     finish(img, os.path.join(ROOT, args.out), 2)

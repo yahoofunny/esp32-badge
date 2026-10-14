@@ -4,10 +4,13 @@
 
 // Settings, which on this badge means the volume.
 //
-// The stock system's settings screen could control the assistant's volume, and this
-// is the same thing: the level belongs to the ES8311 codec, not to a firmware, so
-// whatever is set here the assistant inherits. Only the assistant makes noise, so a
-// master control is all that is needed -- there is nothing to balance it against.
+// The level is written into the ES8311 codec, which has no reset line on this board,
+// so it survives resets and slot switches. That was the hope for reaching the
+// assistant too, and it does not work: measured on the device, the assistant writes
+// this same register itself on every boot (25% set here came back as 66%), and it
+// keeps no copy in NVS -- so its level is compiled into its firmware. This control
+// therefore covers anything of ours that makes a sound, and cannot reach the
+// assistant. The screen says so rather than implying otherwise.
 //
 // The screen shows the codec's raw register as well as the percentage. There is no
 // other way to see it, and it is the evidence for whether the level is really being

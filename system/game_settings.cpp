@@ -162,7 +162,11 @@ void GameSettings::render()
         if (i == 1) gfx::fillRect(bx[i] - 2, BTN_Y - 10, 4, 21, c);
     }
 
-    gfx::textCentered("shared with the assistant", HINT_Y, COL_DIM, 1);
+    // Not "shared with the assistant": measured on the device, the assistant writes
+    // this same register itself on every boot, and its level is compiled into its
+    // firmware with no copy in NVS. So the level here is for anything of ours that
+    // makes a sound, and saying otherwise would be a control that lies.
+    gfx::textCentered("assistant keeps its own level", HINT_Y, COL_DIM, 1);
 }
 
 void GameSettings::drawIcon(float cx, float cy, float size) const
