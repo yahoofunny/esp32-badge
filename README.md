@@ -53,8 +53,16 @@ git clone --depth 1 https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.85B.gi
 ```
 
 Contains the official Arduino + ESP-IDF examples, the published factory firmware,
-and the schematic. The ESP-IDF examples include `05_esp-brookesia` (the stock
-system's source) and `06_qmi8658_test` (IMU check).
+and the schematic. The ESP-IDF examples include `05_esp-brookesia` (an ESP-Brookesia
+framework demo) and `06_qmi8658_test` (IMU check).
+
+> **`05_esp-brookesia` is not the full shipping system.** It builds the same
+> ESP-Brookesia *Phone* framework with the same dark stylesheet, but it only installs
+> the `SquarelineDemo` app (`main/main.cpp`). The apps the shipped binary actually has
+> — XiaoZhi, Video Player, Chipmunk2d, and the rest — are **not** in this source tree,
+> so rebuilding it gives you a reduced system, not a byte-equivalent one. The
+> prebuilt binary in `Firmware/` is the only faithful copy of the stock system, which
+> is why backing it up matters.
 
 ### 2. Arduino path
 
