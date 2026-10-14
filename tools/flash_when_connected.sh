@@ -9,8 +9,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 for i in $(seq 1 600); do
     if "$ROOT/tools/deploy_game.sh" "$ROOT/system" COM3 > /tmp/waitdeploy.log 2>&1; then
         echo "deployed on attempt $i"
-        sleep 4
-        python "$ROOT/tools/serial_capture.py" COM3 8 2>/dev/null || true
         exit 0
     fi
     sleep 2
