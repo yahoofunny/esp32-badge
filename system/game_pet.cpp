@@ -832,7 +832,12 @@ void GamePet::update(float dt)
     lastTapped = -1;
 
     // The eyes follow the finger whenever it is down, fading back when it lifts.
-    if (input::touchDown()) {
+    //
+    // Not while it is being dragged, though: then the body is at the finger, so the
+    // offset comes out near zero and only jitters with the per-frame difference
+    // between the finger and where the body had got to. There is nothing to look at
+    // when you are being carried.
+    if (input::touchDown() && !dragging) {
         lookX = clampf((input::tapX() - petX) * 0.12f, -5.0f, 5.0f);
         lookY = clampf((input::tapY() - petY) * 0.12f, -5.0f, 5.0f);
     } else {
