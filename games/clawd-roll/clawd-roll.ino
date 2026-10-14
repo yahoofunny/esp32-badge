@@ -66,11 +66,29 @@ static const uint16_t COL_BODY    = PIXEL(CLAWD_BODY_RGB565);
 static const uint16_t COL_DETAIL  = PIXEL(CLAWD_DETAIL_RGB565);
 
 // ------------------------------------------------------------------- physics --
-static const float ACC_GAIN  = 0.45f;   // velocity delta per frame at 1 g of tilt
-static const float FRICTION  = 0.985f;  // per-frame velocity decay
+// ACC_GAIN is the main feel knob. Terminal speed at a given tilt works out to
+// ACC_GAIN * tilt[g] / (1 - FRICTION); with these values a gentle ~9 degree tilt
+// settles around a third of MAX_SPEED and a firm ~30 degree tilt saturates it.
+static const float ACC_GAIN  = 0.40f;
+static const float FRICTION  = 0.985f;  // per-frame velocity decay (long, floaty coast)
 static const float MAX_SPEED = 9.0f;    // px per frame
 static const float RESTITUTION = 0.86f; // wall bounciness
-static const float DEADZONE  = 0.035f;  // g; ignores hand tremor while held flat
+static const float DEADZONE  = 0.025f;  // g; applied after trimming
+
+// Slow auto-trim of the accelerometer's static offset.
+//
+// Because of friction, *any* steady acceleration produces a steady terminal
+// velocity -- so a bias of even 0.06 g is enough to walk the ball into a wall and
+// hold it there, which reads as "it only sticks to the edge". Real accelerometers
+// carry exactly that much zero-g offset, and a badge resting on a slightly sloped
+// surface adds more.
+//
+// Trimming only happens while the board is already close to level, so it removes
+// that offset without ever fighting a deliberate tilt: lean the board and the gate
+// closes, leaving the player's input untouched.
+static const float TRIM_GATE  = 0.16f;   // g; only trim within this band around level
+static const float TRIM_ALPHA = 0.005f;  // per frame -> ~3.3 s time constant at 60 fps
+static float trimX = 0.0f, trimY = 0.0f;
 
 // Exit gesture. The hold time is deliberately long, and the gesture stays disarmed
 // for the first few seconds, so a floating or mis-read GPIO0 cannot eject the user
@@ -108,7 +126,6 @@ static const float IMPACT_LIFE = 0.30f;
 
 static SensorQMI8658 imu;
 static bool  imuOk = false;
-static float imuBase[3] = {0, 0, 0};   // accelerometer reading with the board flat
 static int   gravityAxis = 2;          // axis perpendicular to the screen (auto)
 static int   inPlane[2]  = {0, 1};     // the other two axes, ascending
 
@@ -220,6 +237,12 @@ static void detectOrientation()
   // Average a short window, then treat the axis holding the largest magnitude as
   // the one perpendicular to the screen. Everything else follows from that, so the
   // user never has to declare how the chip is mounted.
+  //
+  // The averaged vector is used ONLY to identify that axis. It is deliberately not
+  // kept as a "neutral" to subtract at runtime: with a gravity-sensed tilt control,
+  // level *is* zero on the in-plane axes, so subtracting a snapshot taken at boot
+  // merely bakes in whatever angle the board happened to be held at. A constant
+  // residual tilt like that pins the ball against the wall and it never comes back.
   const int N = 40;
   float sum[3] = {0, 0, 0};
   for (int i = 0; i < N; i++) {
@@ -228,18 +251,20 @@ static void detectOrientation()
     sum[0] += a[0]; sum[1] += a[1]; sum[2] += a[2];
     delay(5);
   }
-  for (int i = 0; i < 3; i++) imuBase[i] = sum[i] / N;
+  float avg[3];
+  for (int i = 0; i < 3; i++) avg[i] = sum[i] / N;
 
   gravityAxis = 0;
   for (int i = 1; i < 3; i++) {
-    if (fabsf(imuBase[i]) > fabsf(imuBase[gravityAxis])) gravityAxis = i;
+    if (fabsf(avg[i]) > fabsf(avg[gravityAxis])) gravityAxis = i;
   }
   int k = 0;
   for (int i = 0; i < 3; i++) {
     if (i != gravityAxis) inPlane[k++] = i;
   }
 
-  Serial.printf("[imu] baseline  x=%.3f y=%.3f z=%.3f g\n", imuBase[0], imuBase[1], imuBase[2]);
+  Serial.printf("[imu] boot average x=%.3f y=%.3f z=%.3f g (used only to find the "
+                "perpendicular axis)\n", avg[0], avg[1], avg[2]);
   Serial.printf("[imu] gravity axis = %d (%s)  in-plane axes = %d, %d\n",
                 gravityAxis, "xyz" + gravityAxis, inPlane[0], inPlane[1]);
   Serial.printf("[imu] screen X <- axis %d * %+d, screen Y <- axis %d * %+d\n",
@@ -332,6 +357,11 @@ void setup()
                 digitalRead(0), EXIT_ARM_DELAY_MS);
   Serial.println("[clawd-roll] running. Long-press BOOT to return to the stock system.");
 
+  // A lazy first push, so the screen is alive the moment it appears rather than
+  // showing a motionless sprite waiting to be nudged.
+  vx =  1.7f;
+  vy = -1.2f;
+
   bootMs = millis();
 }
 
@@ -346,11 +376,24 @@ void loop()
   pollExitButton();
 
   // ---- input: tilt -> acceleration ------------------------------------------
+  // Raw in-plane gravity, straight from the sensor. Level means zero, so holding
+  // the board flat lets the ball coast and any tilt drives it -- no calibration
+  // step whose snapshot could go stale.
   float a[3];
   readAccel(a);
 
-  float tx = (a[inPlane[AXIS_X]] - imuBase[inPlane[AXIS_X]]) * SIGN_X;
-  float ty = (a[inPlane[AXIS_Y]] - imuBase[inPlane[AXIS_Y]]) * SIGN_Y;
+  float rx = a[inPlane[AXIS_X]] * SIGN_X;
+  float ry = a[inPlane[AXIS_Y]] * SIGN_Y;
+
+  // Remove the static offset, but only while the board is near level (see the
+  // comment on TRIM_GATE). The gate is tested against the pre-trim reading.
+  if (fabsf(rx - trimX) < TRIM_GATE && fabsf(ry - trimY) < TRIM_GATE) {
+    trimX += (rx - trimX) * TRIM_ALPHA;
+    trimY += (ry - trimY) * TRIM_ALPHA;
+  }
+
+  float tx = rx - trimX;
+  float ty = ry - trimY;
   if (fabsf(tx) < DEADZONE) tx = 0.0f;
   if (fabsf(ty) < DEADZONE) ty = 0.0f;
 
@@ -432,7 +475,9 @@ void loop()
   // ---- diagnostics at ~4 Hz -------------------------------------------------
   if (now - lastDiagMs > 250) {
     lastDiagMs = now;
-    Serial.printf("[in] tilt x=%+.3f y=%+.3f g -> v=(%+.2f,%+.2f) pos=(%.0f,%.0f) btn=%d\n",
-                  tx, ty, vx, vy, bx, by, digitalRead(0));
+    Serial.printf("[in] tilt x=%+.3f y=%+.3f g (trim %+.3f/%+.3f) -> v=(%+.2f,%+.2f) "
+                  "pos=(%.0f,%.0f) r=%.0f btn=%d\n",
+                  tx, ty, trimX, trimY, vx, vy, bx, by,
+                  sqrtf((bx - CX) * (bx - CX) + (by - CY) * (by - CY)), digitalRead(0));
   }
 }
