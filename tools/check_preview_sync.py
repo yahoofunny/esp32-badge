@@ -94,6 +94,9 @@ def main() -> int:
           re.search(r"^ACT_LABELS = \[(.*?)\]", preview, re.M).group(1)
           .replace('"', "").split(", "))
 
+    # The icon's proportions are not checked here: preview_pet.py parses them out of
+    # GamePet::drawIcon, so there is no second copy to drift.
+
     # --- and the stage names ------------------------------------------------------
     check("STAGE_NAMES",
           re.findall(r'"(\w+)"', re.search(r"STAGE_NAMES\[4\] = \{(.*?)\}", cpp).group(1)),

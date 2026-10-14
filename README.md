@@ -156,6 +156,7 @@ python tools/make_pet_sprites.py       # regenerate the pet's bodies
 python tools/make_icon.py              # regenerate the project icon
 
 python tools/preview_pet.py            # check the pet's layout before flashing it
+python tools/preview_pet.py --icons    # ... its launcher icon, on the carousel disc
 python tools/preview_launcher.py       # likewise for the carousel
 python tools/check_preview_sync.py     # the previews only verify anything while they
                                        # still agree with the firmware's constants

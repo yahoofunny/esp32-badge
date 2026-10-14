@@ -483,34 +483,59 @@ void GamePet::act(int a)
 // ------------------------------------------------------------------ drawing ----
 void GamePet::drawIcon(float cx, float cy, float size) const
 {
-    // clawd in miniature, laid out from the same proportions as the body sprites so
-    // the launcher tile and the pet itself are recognisably the same character: a
-    // block of a head, an arm bar through it, four legs.
-    const int w  = (int)size;
-    const int bw = (int)(w * 0.62f);          // body/head width, arms reach past it
-    const int x  = (int)cx - bw / 2;
-    const int y  = (int)cy - w / 2;
-    const int headH = (int)(w * 0.44f);
-    const int armY  = y + headH;
-    const int armH  = (int)(w * 0.16f);
-    const int legY  = armY + armH;
-    const int legH  = (int)(w * 0.40f);
-    const int legW  = (int)(w * 0.11f);
+    // clawd in miniature, at the artwork's own proportions. Every fraction below is
+    // measured off clawd-source.png (378x253) rather than estimated: the icon box is
+    // `size` wide and the character is 1.494 times wider than tall, so anything that
+    // lays him out in a square comes out stretched by half again.
+    //
+    // The legs are not evenly spaced either. They stand in two pairs, with the gap
+    // down the middle twice the width of the gaps at the sides, and drawing them
+    // evenly -- as the first version of this did -- loses the stance that makes the
+    // silhouette read as clawd.
+    static const float ASPECT   = 1.494f;   // 378 / 253
+    static const float BODY_X   = 0.1587f;  // head and torso column, left edge
+    static const float BODY_W   = 0.6852f;
+    static const float ARM_Y    = 0.2530f;  // the bar where the arms stick out
+    static const float ARM_H    = 0.2530f;
+    static const float LEG_Y    = 0.7310f;
+    static const float LEG_W    = 0.0926f;
+    static const float LEG_GAP  = 0.0794f;  // side gaps; the middle ends up twice this
+    static const float EYE_DX   = 0.2037f;  // eye centre, from the icon's centre
+    static const float EYE_DY   = 0.1739f;
+    static const float EYE_SIDE = 0.0979f;
 
-    gfx::fillRect(x, y, bw, headH, COL_ACCENT);                       // head
-    gfx::fillRect((int)cx - (int)(w * 0.5f), armY, (int)(w * 0.5f) * 2, armH, COL_ACCENT);
-    gfx::fillRect(x, armY, bw, armH + legH, COL_ACCENT);              // torso
+    const int w = (int)size;
+    const int h = (int)((float)w / ASPECT + 0.5f);
+    const int left = (int)cx - w / 2;
+    const int top  = (int)cy - h / 2;
 
-    const int step = (bw - legW) / 3;
-    for (int i = 0; i < 4; i++) {
-        gfx::fillRect(x + i * step, legY + armH, legW, legH, COL_ACCENT);
-    }
+    const int bodyX = left + (int)(BODY_X * w + 0.5f);
+    const int bodyW = (int)(BODY_W * w + 0.5f);
+    const int armY  = top + (int)(ARM_Y * h + 0.5f);
+    const int armH  = (int)fmaxf(1.0f, ARM_H * h + 0.5f);
+    const int legY  = top + (int)(LEG_Y * h + 0.5f);
+    const int legH  = top + h - legY;
+    const int legW  = (int)fmaxf(1.0f, LEG_W * w + 0.5f);
+    const int gap   = (int)fmaxf(1.0f, LEG_GAP * w + 0.5f);
 
-    const int er = (int)fmaxf(1.0f, w * 0.055f);
-    const int ex = (int)(bw * 0.30f);
-    const int ey = y + (int)(headH * 0.30f);
-    gfx::fillRect((int)cx - ex - er, ey, er, er, COL_BG);
-    gfx::fillRect((int)cx + ex, ey, er, er, COL_BG);
+    // Head and torso as one column, so the row the arms are on is filled either way.
+    gfx::fillRect(bodyX, top, bodyW, legY - top, COL_ACCENT);
+    gfx::fillRect(left, armY, w, armH, COL_ACCENT);                  // arms
+
+    // Outer legs flush with the body, inner legs a gap in from them: the middle gap
+    // then falls out at about twice the side gaps, as in the artwork.
+    gfx::fillRect(bodyX, legY, legW, legH, COL_ACCENT);
+    gfx::fillRect(bodyX + bodyW - legW, legY, legW, legH, COL_ACCENT);
+    gfx::fillRect(bodyX + legW + gap, legY, legW, legH, COL_ACCENT);
+    gfx::fillRect(bodyX + bodyW - 2 * legW - gap, legY, legW, legH, COL_ACCENT);
+
+    // Eyes as the artwork has them: small dark squares, at the height the sprite
+    // header records for them.
+    const int eye = (int)fmaxf(1.0f, EYE_SIDE * w + 0.5f);
+    const int ex  = (int)(EYE_DX * w + 0.5f);
+    const int ey  = top + (int)(EYE_DY * h + 0.5f);
+    gfx::fillRect((int)cx - ex - eye / 2, ey, eye, eye, COL_BG);
+    gfx::fillRect((int)cx + ex - eye / 2, ey, eye, eye, COL_BG);
 }
 
 void GamePet::drawMeter(const char *label, float value, int x, int y)
