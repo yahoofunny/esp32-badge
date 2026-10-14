@@ -210,7 +210,7 @@ float visibleHalfWidth(int y)
 
 // --- sprites ----------------------------------------------------------------
 void drawSpriteRotated(const Sprite &s, float cx, float cy, float angle,
-                       float radius, const uint16_t palette[3])
+                       float radius, const uint16_t palette[4])
 {
     // Map the sprite's circumradius onto the requested radius, then for each
     // destination pixel run the inverse transform back into source space. Only the
@@ -248,7 +248,7 @@ void drawSpriteRotated(const Sprite &s, float cx, float cy, float angle,
 }
 
 void drawSpriteSized(const Sprite &s, float cx, float cy, float angle,
-                     float targetWidth, const uint16_t palette[3])
+                     float targetWidth, const uint16_t palette[4])
 {
     const float circum = sqrtf((s.w * 0.5f) * (s.w * 0.5f) + (s.h * 0.5f) * (s.h * 0.5f));
     // radius such that the horizontal extent comes out as targetWidth

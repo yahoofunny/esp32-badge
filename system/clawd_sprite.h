@@ -14,8 +14,10 @@ static const gfx::Sprite CLAWD_SPRITE = { clawd_bits, CLAWD_W, CLAWD_H, CLAWD_RO
 
 // Named CLAWD_SPRITE_PALETTE, not CLAWD_SPRITE_PALETTE: the generated assets_clawd.h already
 // defines a macro of the latter name, and a macro would rewrite this declaration.
-static const uint16_t CLAWD_SPRITE_PALETTE[3] = {
+static const uint16_t CLAWD_SPRITE_PALETTE[4] = {
     0,                              // index 0 is transparent and never read
     PX(CLAWD_BODY_RGB565),
     PX(CLAWD_DETAIL_RGB565),
+    PX(CLAWD_BODY_RGB565),          // index 3 never occurs in this bitmap; the
+                                    // palette has to be four long all the same
 };

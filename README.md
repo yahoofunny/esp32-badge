@@ -136,10 +136,15 @@ system/
 ├── game_pet.{h,cpp}      the tamagotchi: needs, growth, poking, the scrub game
 ├── clawd_sprite.h        the sprite + palette, shared by both games
 ├── assets_clawd.h        generated 2bpp sprite
+├── assets_icons.h        generated per-app launcher icons
 ├── assets_pet.h          generated per-stage pet bodies
 ├── assets_font.h         generated 8x8 ASCII font
 └── partitions.csv        must match the stock layout — see Coexistence below
 ```
+
+Each entry draws its own icon from a different clawd animation — at a laptop, under an
+idea bulb, in headphones — because three copies of one standing pose, told apart only by
+the colour of the disc behind them, is not a launcher.
 
 **Controls.** Tilt the board left or right to step the carousel — one lean moves one
 place and then latches until the board is level again, so a held tilt does not
@@ -153,10 +158,11 @@ bottom corner fills while you hold, so the gesture is discoverable.
 ./tools/deploy_game.sh games/clawd-roll   # or deploy the standalone game sketch
 python tools/make_font.py              # regenerate the bitmap font
 python tools/make_pet_sprites.py       # regenerate the pet's bodies
+python tools/make_icon_sprites.py      # regenerate the three launcher icons
 python tools/make_icon.py              # regenerate the project icon
 
 python tools/preview_pet.py            # check the pet's layout before flashing it
-python tools/preview_pet.py --icons    # ... its launcher icon, on the carousel disc
+python tools/preview_icons.py          # the launcher icons, on the carousel's discs
 python tools/preview_launcher.py       # likewise for the carousel
 python tools/check_preview_sync.py     # the previews only verify anything while they
                                        # still agree with the firmware's constants
@@ -184,7 +190,8 @@ who is deliberately leaning in.
 <img src="games/clawd-roll/icon.png" width="180" alt="clawd-roll icon">
 
 Tilt the board and clawd rolls; let up and it coasts; hit the arena wall and it
-bounces. No score, no goal — it is a thing that feels good to wobble.
+bounces, with a ring that expands at the point of contact. No score, no goal — it is a
+thing that feels good to wobble.
 
 Also buildable as a standalone single-game firmware, which is useful when you want to
 iterate on the physics without the launcher in the way:

@@ -65,7 +65,9 @@ float visibleHalfWidth(int y);
 // visibleHalfWidth() to check that they do.
 
 // --- sprites ----------------------------------------------------------------
-// 2bpp indexed bitmap: index 0 is transparent, 1 and 2 select palette entries.
+// 2bpp indexed bitmap: index 0 is transparent, 1..3 select palette entries. The
+// palette is four long, not three: 2bpp addresses four values, and a sprite that
+// used index 3 with a three-entry palette would read past the end of it.
 struct Sprite {
     const uint8_t *bits;
     int            w;
@@ -82,11 +84,11 @@ inline uint8_t spriteIndex(const Sprite &s, int x, int y)
 // circumradius (half its diagonal) equals `radius`. Sampling is nearest-neighbour
 // with an alpha test, which is what gives the crisp pixel-art edge.
 void drawSpriteRotated(const Sprite &s, float cx, float cy, float angle,
-                       float radius, const uint16_t palette[3]);
+                       float radius, const uint16_t palette[4]);
 
 // Same, but sized by a target width in pixels rather than a circumradius. Handy
 // for launcher icons, which are laid out by their footprint.
 void drawSpriteSized(const Sprite &s, float cx, float cy, float angle,
-                     float targetWidth, const uint16_t palette[3]);
+                     float targetWidth, const uint16_t palette[4]);
 
 }  // namespace gfx

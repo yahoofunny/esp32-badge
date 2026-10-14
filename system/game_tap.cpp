@@ -6,6 +6,7 @@
 #include "Display_ST77916.h"
 #include "arena.h"
 #include "clawd_sprite.h"
+#include "assets_icons.h"
 #include "gfx.h"
 #include "input.h"
 
@@ -24,12 +25,9 @@ static const uint16_t COL_FLASH   = PX(RGB565(0xFF, 0xFF, 0xFF));
 
 void GameTap::drawIcon(float cx, float cy, float size) const
 {
-    // Concentric target rings: distinct at launcher size from clawd-roll's plain
-    // sprite, without needing its own artwork.
-    gfx::strokeCircle(cx, cy, size * 0.46f, 3.0f, COL_RING);
-    gfx::strokeCircle(cx, cy, size * 0.26f, 3.0f, COL_RING);
-    gfx::fillCircle(cx, cy, size * 0.10f, COL_RING);
-    gfx::drawSpriteSized(CLAWD_SPRITE, cx, cy, 0.0f, size * 0.52f, CLAWD_SPRITE_PALETTE);
+    // The idea bulb: clawd appearing with a light on, which is what the game is --
+    // he pops up somewhere and you have to spot him.
+    gfx::drawSpriteSized(icon_tap, cx, cy, 0.0f, size, icon_tap_palette);
 }
 
 void GameTap::enter()
@@ -152,7 +150,7 @@ void GameTap::render()
         const uint16_t body = (hitFlash > 0.0f)
                                   ? gfx::mix(CLAWD_SPRITE_PALETTE[1], COL_FLASH, hitFlash * 0.8f)
                                   : CLAWD_SPRITE_PALETTE[1];
-        const uint16_t pal[3] = { 0, body, CLAWD_SPRITE_PALETTE[2] };
+        const uint16_t pal[4] = { 0, body, CLAWD_SPRITE_PALETTE[2], body };
         gfx::drawSpriteRotated(CLAWD_SPRITE, tx, ty, 0.0f, TAP_R * scale, pal);
 
         // Shrinking timer bar under the score, so the deadline is legible.

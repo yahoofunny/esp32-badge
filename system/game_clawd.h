@@ -25,4 +25,8 @@ private:
     float bx = 0, by = 0, vx = 0, vy = 0, roll = 0;
     int   prevY0 = 0, prevY1 = 0;
     float impactX = 0, impactY = 0, impactAge = 0;
+    // Whether the ring was on screen last frame. The rows it covers are repainted
+    // from the backdrop, so the frame it expires on still has to repaint them --
+    // impactAge is already zero by then and the ring's rows would not be counted.
+    bool  impactWasVisible = false;
 };

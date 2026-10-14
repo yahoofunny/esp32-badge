@@ -6,6 +6,7 @@
 #include "Display_ST77916.h"
 #include "arena.h"
 #include "clawd_sprite.h"
+#include "assets_icons.h"
 #include "gfx.h"
 #include "input.h"
 
@@ -24,7 +25,10 @@ static const uint16_t COL_IMPACT  = PX(RGB565(0xFF, 0xD2, 0x3E));
 // ------------------------------------------------------------------ setup ----
 void GameClawd::drawIcon(float cx, float cy, float size) const
 {
-    gfx::drawSpriteSized(CLAWD_SPRITE, cx, cy, -0.28f, size, CLAWD_SPRITE_PALETTE);
+    // At a laptop. The three games used to share one standing pose, which made the
+    // carousel three copies of the same silhouette with only the disc colour to tell
+    // them apart; this one is a dark slab, unmistakable even at the back of the ring.
+    gfx::drawSpriteSized(icon_roll, cx, cy, 0.0f, size, icon_roll_palette);
 }
 
 void GameClawd::enter()
@@ -123,7 +127,13 @@ void GameClawd::render()
 
     int uy0 = (ny0 < prevY0) ? ny0 : prevY0;
     int uy1 = (ny1 > prevY1) ? ny1 : prevY1;
-    if (impactAge > 0.0f) {
+
+    // impactWasVisible as well as impactAge: the ring is erased by painting its rows
+    // back from the backdrop, and on the frame it expires impactAge is already zero.
+    // Counting only the live ring leaves its outline on screen until the ball
+    // happens to roll over those rows again.
+    const bool ringVisible = impactAge > 0.0f;
+    if (ringVisible || impactWasVisible) {
         int iy0 = (int)(impactY - 52); if (iy0 < 0) iy0 = 0;
         int iy1 = (int)(impactY + 52); if (iy1 > SCR_H - 1) iy1 = SCR_H - 1;
         if (iy0 < uy0) uy0 = iy0;
@@ -136,7 +146,7 @@ void GameClawd::render()
 
     gfx::drawSpriteRotated(CLAWD_SPRITE, bx, by, roll, BALL_R, CLAWD_SPRITE_PALETTE);
 
-    if (impactAge > 0.0f) {
+    if (ringVisible) {
         const float t = 1.0f - (impactAge / IMPACT_LIFE);
         const float r = 6.0f + t * 46.0f;
         const float thickness = 2.5f * (1.0f - t) + 0.9f;
@@ -145,5 +155,6 @@ void GameClawd::render()
 
     prevY0 = ny0;
     prevY1 = ny1;
+    impactWasVisible = ringVisible;
     setDirty(uy0, uy1);
 }

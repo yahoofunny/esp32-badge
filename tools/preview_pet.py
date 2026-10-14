@@ -5,6 +5,9 @@ Mirrors the drawing in system/game_pet.cpp: the terminal chrome (header, rules, 
 bracketed meters plus health, a thought, a text menu) and clawd himself -- the body
 sprite for the stage, with eyes, a mouth and a mood mark drawn into it.
 
+The launcher icon is not here: it is a sprite now, and tools/preview_icons.py draws
+those on the carousel's own discs.
+
 Both halves of that are worth checking before flashing. The panel is round, so the
 usable width at row y is 2*sqrt(180^2-(y-180)^2) and anything wider is behind the
 bezel; and the eyes are drawn at coordinates compiled into the sprite header, so a
@@ -12,7 +15,6 @@ mistake there puts them on clawd's chin rather than his face.
 
     tools/preview_pet.py                  # contact sheet of stages and moods
     tools/preview_pet.py --screen         # one full 360x360 screen, bezel masked
-    tools/preview_pet.py --icons          # the launcher icon, on the carousel's disc
     tools/preview_pet.py --screen --stage 3 --anim annoyed --hunger 20
 """
 
@@ -69,29 +71,7 @@ MOODS = {
     "annoyed": (EYE_ANGRY, EMOTE_ANGER, False, 4),
 }
 
-def load_icon_fractions(path):
-    """The icon's proportions, read out of the firmware rather than copied.
-
-    There is no second copy to drift: these numbers are the ones make_pet_sprites.py
-    measured off the artwork, and re-typing them here would just be a chance to get
-    them wrong.
-    """
-    src = open(path, encoding="utf-8").read()
-    body = src[src.index("void GamePet::drawIcon"):]
-    body = body[:body.index(chr(10) + "}")]
-    names = ["ASPECT", "BODY_X", "BODY_W", "ARM_Y", "ARM_H", "LEG_Y", "LEG_W",
-             "LEG_GAP", "EYE_DX", "EYE_DY", "EYE_SIDE"]
-    out = {}
-    for name in names:
-        m = re.search(rf"{name}\s*=\s*([0-9.]+)f", body)
-        if not m:
-            raise SystemExit(f"preview: {name} not found in GamePet::drawIcon")
-        out[name] = float(m.group(1))
-    return out
-
-
 FONT = load_font(os.path.join(ROOT, "system", "assets_font.h"))
-ICON = load_icon_fractions(os.path.join(ROOT, "system", "game_pet.cpp"))
 PAL, SPRITES = load_pet_sprites(os.path.join(ROOT, "system", "assets_pet.h"))
 INK = PAL[2]
 
@@ -191,33 +171,6 @@ def draw_pet(px, stage, mood, cx=180, cy=FACE_CY):
         draw_emote(px, emote, cx + w // 2 - 10, top + 6)
 
 
-def draw_icon(px, cx, cy, size):
-    """Mirrors GamePet::drawIcon."""
-    f = ICON
-    w = int(size)
-    h = int(w / f["ASPECT"] + 0.5)
-    left, top = int(cx) - w // 2, int(cy) - h // 2
-    body_x = left + int(f["BODY_X"] * w + 0.5)
-    body_w = int(f["BODY_W"] * w + 0.5)
-    arm_y = top + int(f["ARM_Y"] * h + 0.5)
-    arm_h = max(1, int(f["ARM_H"] * h + 0.5))
-    leg_y = top + int(f["LEG_Y"] * h + 0.5)
-    leg_h = top + h - leg_y
-    leg_w = max(1, int(f["LEG_W"] * w + 0.5))
-    gap = max(1, int(f["LEG_GAP"] * w + 0.5))
-    fill_rect(px, body_x, top, body_w, leg_y - top, COL_ACCENT)
-    fill_rect(px, left, arm_y, w, arm_h, COL_ACCENT)
-    fill_rect(px, body_x, leg_y, leg_w, leg_h, COL_ACCENT)
-    fill_rect(px, body_x + body_w - leg_w, leg_y, leg_w, leg_h, COL_ACCENT)
-    fill_rect(px, body_x + leg_w + gap, leg_y, leg_w, leg_h, COL_ACCENT)
-    fill_rect(px, body_x + body_w - 2 * leg_w - gap, leg_y, leg_w, leg_h, COL_ACCENT)
-    eye = max(1, int(f["EYE_SIDE"] * w + 0.5))
-    ex = int(f["EYE_DX"] * w + 0.5)
-    ey = top + int(f["EYE_DY"] * h + 0.5)
-    fill_rect(px, int(cx) - ex - eye // 2, ey, eye, eye, COL_BG)
-    fill_rect(px, int(cx) + ex - eye // 2, ey, eye, eye, COL_BG)
-
-
 def draw_meter(px, label, value, x, y):
     filled = round(max(0.0, min(100.0, value)) / 100.0 * BAR_CHARS)
     line = "%-6s [" % label + "".join("#" if i < filled else "." for i in range(BAR_CHARS)) + "]"
@@ -296,36 +249,11 @@ def sheet(args):
     finish(img, args.out, 1)
 
 
-def icons(args):
-    """The launcher icon at its real sizes, both alone and on the disc the carousel
-    paints behind every entry, which is what actually decides whether it reads well."""
-    # The launcher draws a disc of `size`, then passes size * 0.56 to drawIcon.
-    disc = [46.0, 58.0, 74.0, 74.0 * 2.1]      # back of the ring, mid, front, launch
-    cells = []
-    for d in disc:
-        img = Image.new("RGB", (160, 160), COL_BG)
-        px = img.load()
-        fill_circle(px, 80, 80, d * 0.5, (0x6B, 0x3B, 0x2C))
-        draw_icon(px, 80, 80, d * 0.56)
-        cells.append(img)
-    out = Image.new("RGB", (160 * len(cells), 160), (0x20, 0x20, 0x28))
-    for i, c in enumerate(cells):
-        out.paste(c, (i * 160, 0))
-    out.save(os.path.join(ROOT, "build/preview/pet_icon.png"))
-    print(f"wrote build/preview/pet_icon.png  "
-          f"(discs {disc[0]:.0f}..{disc[-1]:.0f} px, icon {disc[0]*0.56:.0f}.."
-          f"{disc[-1]*0.56:.0f} px wide, aspect {ICON['ASPECT']})")
-    print(f"icon heights: " + ", ".join(
-        f"{d*0.56:.0f}x{d*0.56/ICON['ASPECT']:.0f}" for d in disc))
-
-
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--screen", action="store_true", help="one full screen, not a sheet")
     ap.add_argument("--shake", action="store_true", help="the scrub mini-game instead")
-    ap.add_argument("--icons", action="store_true",
-                    help="the launcher icon at the carousel's real sizes")
     ap.add_argument("--stage", type=int, default=3, choices=list(range(4)))
     ap.add_argument("--anim", default="idle", choices=list(MOODS))
     ap.add_argument("--hunger", type=float, default=72)
@@ -337,10 +265,7 @@ def main():
     ap.add_argument("--out", default="build/preview/pet_state.png")
     args = ap.parse_args()
     args.out = os.path.join(ROOT, args.out)
-    if args.icons:
-        icons(args)
-    else:
-        (screen if args.screen else sheet)(args)
+    (screen if args.screen else sheet)(args)
     return 0
 
 
