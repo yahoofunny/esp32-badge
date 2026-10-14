@@ -193,58 +193,47 @@ and vanishes. Tap it to score, three time-outs and it is over. It exists as much
 exercise the game interface as to be played — between it and clawd-roll both input
 paths and both ends of the drawing cost are covered.
 
-## Coexistence: our system and the stock system
+## Coexistence: our launcher and the XiaoZhi assistant
 
-Both firmwares are flashed and neither is overwritten. Switching rewrites only the
-8 KB `otadata` selector, so it takes about a second rather than the ~70 s a full
-reflash costs:
+The board ships with **two firmwares**, and this project preserves that arrangement
+rather than inventing one:
 
 ```
-factory  app  0x020000  1.00MB   our system (launcher + games)
-ota_0    app  0x120000  9.62MB   the stock Waveshare system, including the XiaoZhi AI app
-assets   data 0xac0000  4.00MB   stock media partition, left where it was
+factory  app  0x020000  6.57MB   the main application  <- our launcher lives here
+ota_0    app  0x6c0000  4.00MB   xiaozhi 2.2.4         <- the assistant, untouched
+assets   data 0xac0000  4.00MB   fonts + speech models
 ```
 
-**The slots are the opposite way round from how the board shipped**, and that is the
-whole trick. `tools/migrate_layout.py` performs the swap; here is why it works.
+`ota_0` is **not spare space**. It holds the XiaoZhi voice assistant as a complete
+standalone firmware — the board dump has an app description at that offset reading
+`project=xiaozhi version=2.2.4`. Treating it as an empty slot and writing our own
+firmware there destroys the assistant, and worse, it does not fail quietly: the main
+application still switches to `ota_0` when you tap XiaoZhi, finds something that is
+not the assistant, and the device reboots endlessly.
 
-The stock firmware calls `esp_ota_set_boot_partition(factory)` on every boot, and for
-a factory partition ESP-IDF just *erases otadata*:
-
-```c
-// components/app_update/esp_ota_ops.c
-// if set boot partition to factory bin ,just format ota info partition
-if (partition->subtype == ESP_PARTITION_SUBTYPE_APP_FACTORY) {
-    return esp_partition_erase_range(find_partition, 0, find_partition->size);
-}
-```
-
-With the stock system in `factory` that behaviour was a trap: it pinned the boot
-target there, so leaving our system meant never getting back without a computer.
-Moving *our* firmware into `factory` turns the same behaviour into the way home.
-
-So the round trip needs no host at all:
+Switching between the two is Waveshare's own mechanism, and it needs only the 8 KB
+`otadata` selector — about a second, versus the ~70 s a full reflash costs:
 
 | | |
 |---|---|
-| launcher → tap **XIAOZHI** (or hold BOOT on the launcher) | writes otadata selecting ota_0, restarts → stock system |
-| power cycle in the stock system | it has already re-pinned the boot target to factory → back to our launcher |
+| launcher → tap **XIAOZHI** (or hold BOOT on the launcher) | writes otadata selecting `ota_0`, restarts → the assistant |
+| in the assistant → **hold BOOT** | it sets `factory` as the boot partition and restarts → our launcher |
 
-The launcher is what boots by default, because erased otadata falls back to `factory`.
+Both directions live in the firmwares themselves; neither needs a host computer, a
+reflash or a power cycle. Our launcher is what boots by default, because erased
+otadata falls back to `factory`.
 
 ```bash
-python tools/switch_slot.py home     # boot our system (erases otadata)
-python tools/switch_slot.py stock    # boot the stock system (selects ota_0)
+python tools/switch_slot.py home     # boot our launcher (erases otadata)
+python tools/switch_slot.py stock    # boot the assistant (selects ota_0)
 python tools/switch_slot.py status   # report what is currently selected
-python tools/install_stack.py       # (re)install our launcher + the assistant; --dry-run to preview
+python tools/install_stack.py        # (re)install both; --dry-run to preview
 ```
 
-`assets` deliberately keeps the offset the stock layout gave it, so the swap never has
-to copy those 4 MB. The bootloader is not rewritten either — it reads the table from
-flash at runtime.
-
-Reverting is `./tools/restore_stock.sh`, which writes the original 16 MB dump back
-verbatim and with it the original layout.
+The assistant image is recovered from the byte-exact dump in `backup/`, so
+`tools/install_stack.py` can put it back at any time. `tools/restore_stock.sh` goes
+further and rewrites the whole 16 MB dump verbatim, restoring the original firmware
+in every slot. The bootloader is never rewritten — it reads the table at runtime.
 
 ### Why the games are not entries in the stock system's launcher
 
