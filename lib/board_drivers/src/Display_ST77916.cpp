@@ -613,13 +613,30 @@ void LCD_addWindow(uint16_t Xstart, uint16_t Ystart, uint16_t Xend, uint16_t Yen
   esp_lcd_panel_draw_bitmap(panel_handle, Xstart, Ystart, Xend, Yend, color);                     // x_end End index on x-axis (x_end not included)
 }
 
+/* Draw a rectangle, retrying a few times and saying so when it keeps failing. The
+ * colour transfers are asynchronous and have been seen to be rejected outright
+ * ("spi transmit (queue) color failed"); after that nothing updates and nothing
+ * explains why -- the screen keeps the last frame it managed to show, which looks
+ * exactly like a hung badge even though everything else is running. */
+static bool lcd_draw_checked(int x0, int y0, int x1, int y1, const uint16_t *buf,
+                             const char *what)
+{
+  for (int attempt = 1; attempt <= 3; attempt++) {
+    esp_err_t err = esp_lcd_panel_draw_bitmap(panel_handle, x0, y0, x1, y1, buf);
+    if (err == ESP_OK) return true;
+    printf("[lcd] %s push failed (attempt %d: %s)\n", what, attempt, esp_err_to_name(err));
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+  return false;
+}
+
 /* Push the whole panel from a framebuffer whose pixels are ALREADY in panel byte
  * order (i.e. byte-swapped relative to a native uint16_t RGB565). The buffer is
  * not modified. Returns immediately -- the DMA still owns the buffer, so call
  * LCD_waitTrans() before writing to it again. */
 void LCD_pushFull(const uint16_t *fb)
 {
-  esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, EXAMPLE_LCD_WIDTH, EXAMPLE_LCD_HEIGHT, fb);
+  lcd_draw_checked(0, 0, EXAMPLE_LCD_WIDTH, EXAMPLE_LCD_HEIGHT, fb, "full");
 }
 
 /* Push full-width rows y0..y1 inclusive. The rows are contiguous in `fb` (which
@@ -631,15 +648,23 @@ void LCD_pushBand(int y0, int y1, const uint16_t *fb)
   if (y0 < 0) y0 = 0;
   if (y1 > EXAMPLE_LCD_HEIGHT - 1) y1 = EXAMPLE_LCD_HEIGHT - 1;
   if (y1 < y0) return;
-  esp_lcd_panel_draw_bitmap(panel_handle, 0, y0, EXAMPLE_LCD_WIDTH, y1 + 1,
-                            fb + (size_t)y0 * EXAMPLE_LCD_WIDTH);
+  lcd_draw_checked(0, y0, EXAMPLE_LCD_WIDTH, y1 + 1,
+                   fb + (size_t)y0 * EXAMPLE_LCD_WIDTH, "band");
 }
 
-/* Block until every queued pixel transfer has finished. */
+/* Block until every queued pixel transfer has finished -- but not forever. A
+ * transfer that never completes (the queue rejects it and no callback ever comes)
+ * used to spin here for good, which turns one bad frame into a dead badge: the
+ * screen stops updating and nothing says why. */
 void LCD_waitTrans(void)
 {
   uint32_t target = lcd_trans_done_count + 1;
+  uint32_t start = millis();
   while (lcd_trans_done_count < target) {
+    if (millis() - start > 250) {
+      printf("[lcd] transfer never completed; continuing\n");
+      return;
+    }
     vTaskDelay(1);
   }
 }

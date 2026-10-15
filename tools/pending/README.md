@@ -32,3 +32,22 @@ Design notes that are worth keeping whatever the wrapper turns out to be:
   image decoders were linked that way -- see commit c9c593b.
 * The library has a destructor (`~Audio()`), so if it does release the I2S cleanly then the
   reboot on exit could be dropped. Untested.
+
+## upload.{h,cpp} + badge_put.py — 串口传文件（写完了，但传不过去）
+
+目的：不拔卡、不断开 badge，从主机把图片/音乐放进 `/Photos` `/Music`。
+协议：主机发 `W<字节数> <路径>`，badge 回 `[file] ready`，字节流随后，badge 再回
+`[file] wrote <路径> <字节数> crc32=0x…`；CRC 用 zlib 那一版（不是 IDF 那个反转进出的）。
+badge 侧从主循环分块喂，不阻塞渲染；只允许写两个内容文件夹。
+
+**实测卡在哪（2026-10-15）**：
+1. **必须先搞清楚 DTR**：这块板子的硬件 CDC（`USBMode=hwcdc`）**只发不收**，
+   除非主机把 **DTR 拉高**。拉高之后小命令立刻通了（授时命令能写进 RTC）。
+   而真正会触发下载模式的是 **RTS 的抖动**，不是 DTR —— 所以工具的正确写法是
+   "拉高 DTR、绝不碰 RTS"，`tools/set_time.py` / `serial_monitor.py` 里那句
+   "DTR 一律不拉" 的注释是**错的**，代价是命令永远进不去。
+2. **大块数据过不去**：命令（约 30 字节）能进，但 100 字节的负载就一个字节都进不去，
+   badge 侧 `Serial.available()` 一直是 0（固件准时在 10 秒后报 `timeout`）。
+   加了发送节奏也没用 —— 症状指向这块芯片硬件 CDC 的接收缓冲很小、突发即丢。
+   **下一步**：把协议改成"逐行 base64 + 每行一个确认"，完全走已经验证可用的
+   "一行一行"通道，用握手代替缓冲。
