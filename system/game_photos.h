@@ -26,6 +26,7 @@ private:
     bool  failed = false;
     float frameSec = 0.0f;
     int   frameMs = 0;
+    bool  longPressFired = false;
 
     void showCurrent();
 };

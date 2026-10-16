@@ -11,7 +11,12 @@
 
 #define RGB565(r, g, b) ((uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3)))
 #define BSWAP16(c)      ((uint16_t)((((uint16_t)(c) & 0x00FF) << 8) | (((uint16_t)(c) & 0xFF00) >> 8)))
+#ifdef CLAWD_NATIVE_RGB565
+// LVGL swaps its DMA transfer buffer, so source images use native RGB565.
+#define PX(c)           ((uint16_t)(c))
+#else
 #define PX(c)           BSWAP16(c)
+#endif
 
 constexpr int   SCR_W  = 360;
 constexpr int   SCR_H  = 360;

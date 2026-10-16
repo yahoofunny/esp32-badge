@@ -1,11 +1,29 @@
-# esp32-badge
+# esp32-badge · CLAWD PET
 
-Developing a pocket **electronic badge** (电子吧唧) and a set of small games on the
-Waveshare **ESP32-S3-Touch-LCD-1.85B** — a round 1.85" 360×360 touch display with a
-6-axis IMU.
+一只运行在圆屏 ESP32 上的电子吧唧桌宠：**养成、换装和小智语音聊天，放进同一个 CLAWD PET**。
+硬件是 Waveshare **ESP32-S3-Touch-LCD-1.85B**，1.85 英寸 360×360 触摸屏，带六轴传感器、麦克风和扬声器接口。
 
-This repo holds the setup scripts, hardware notes, and (soon) the game and badge
-firmware. It does **not** vendor the upstream SDKs — see [Setup](#setup).
+- **同一只宠物**：蛋、七种成长形态、喂食、抚摸、拖动、休息和清洁；对话时保留形态与配饰，显示表情和中文字幕。
+- **20 种像素配饰**：花朵、安全帽、耳机、巫师帽等叠加在原身体上，体型和比例保持一致；衣柜支持预览、取消和保存。
+- **手指拖转主页**：沿应用圆环滑动，松手吸附，点击打开；主页没有左上角时钟。
+- **满屏相册**：默认等比居中裁剪铺满，长按约 **650ms** 切换完整显示，再长按恢复铺满。
+- **触摸与绘制分开调度**：输入目标 **20ms**，本机实测约 **30ms**；省电只降低绘制频率，按下即唤醒并高亮，松手执行一次，反馈保留约 **150ms**。
+
+实机验证：主页拖转、桌宠互动、语音联网对话和相册显示已通过，触摸操作顺畅；扫描间隔会随运行负载变化。
+
+| 主页 | CLAWD PET 养成 |
+|---|---|
+| ![圆环应用主页，软件渲染](docs/images/launcher.png) | ![带像素配饰的养成页，软件渲染](docs/images/pet-care.png) |
+| 衣柜 | 小智语音 |
+| ![保持同一身体比例的衣柜，软件渲染](docs/images/pet-wardrobe.png) | ![宠物语音状态，软件渲染](docs/images/pet-voice.png) |
+
+*图示由共享 C++ 绘制代码生成，非 LCD 实拍；语音图不包含 LVGL 中文字幕覆盖层。*
+
+Quick links: **[Build and update](#build-and-update)** · **[Voice integration and controls](docs/clawd-pet-voice.md)** · **[Hardware](docs/hardware.md)** · **[Verification](#verification)** · **[Firmware slots](#firmware-slots)**
+
+This repo holds the launcher, games, shared pet model, ESP-IDF voice integration,
+tools and hardware notes. Upstream SDKs, local flash backups and build output are
+not vendored; see [Setup](#setup).
 
 ## Hardware
 
@@ -32,6 +50,8 @@ The USB-C port is wired straight to the chip's native USB-Serial/JTAG
 ```
 esp32-badge/
 ├── system/                    the firmware that runs on the badge (launcher + games)
+├── firmware/clawd_pet/         ESP-IDF voice display, input adapter and UI pacing
+├── assets/clawd-gifs/          deduplicated artwork references; not full GIF pets in firmware
 ├── games/clawd-roll/          the same game as a standalone sketch, no launcher
 ├── lib/
 │   └── board_drivers/         shared Arduino library: ST77916 panel, CST816 touch, I2C
@@ -39,10 +59,12 @@ esp32-badge/
 │   └── hardware.md            pin map, free GPIOs, expansion notes
 ├── tools/
 │   ├── build.sh               compile / flash helper (arduino-cli)
-│   ├── deploy_game.sh         build a sketch, write it into ota_0, boot it
+│   ├── deploy_game.sh         build a sketch, write only the factory app, boot it
+│   ├── prepare_clawd_voice.py prepare the pinned XiaoZhi source + shared pet overlay
+│   ├── install_voice_pet.py   verify / back up / install the integrated ota_0 pet
 │   ├── switch_slot.py         choose which slot the bootloader starts
 │   ├── restore_stock.sh       restore the factory firmware
-│   ├── serial_monitor.py      non-intrusive monitor (never touches DTR/RTS)
+│   ├── serial_monitor.py      native CDC monitor (DTR enabled, RTS inactive)
 │   ├── convert_sprite.py      flat-colour art -> 2bpp indexed C header
 │   ├── make_font.py           bake an 8x8 ASCII bitmap font
 │   ├── make_icon.py           render the project icon
@@ -89,7 +111,7 @@ cp -r ESP32-S3-Touch-LCD-1.85B/Examples/Arduino-V3.2.0/libraries/* \
 
 If you are behind a proxy: `arduino-cli config set network.proxy http://127.0.0.1:7897`
 
-### 3. ESP-IDF path (needed to modify the stock system)
+### 3. ESP-IDF path (for the integrated voice pet)
 
 ```bash
 git clone -b v5.5.3 --depth 1 --shallow-submodules --recursive \
@@ -98,13 +120,40 @@ cmd.exe //c "tools\idf_install_steps.bat"        # installs the esp32s3 toolchai
 cmd.exe //c "tools\idf_env.bat idf.py --version" # sanity check
 ```
 
-## Build and flash
+## Build and update
+
+Make a [full flash backup](#back-up-before-you-flash) before the first installation.
+The supported layout keeps our Arduino launcher in `factory` and the integrated
+ESP-IDF voice pet in `ota_0`; both use the existing partition table.
+
+Build or update the launcher from Git Bash:
 
 ```bash
-./tools/build.sh compile <sketch-dir>
-./tools/build.sh upload  <sketch-dir> [port]     # default port COM3
-./tools/build.sh both    <sketch-dir> [port]
+PARTITION_SCHEME=custom ./tools/build.sh compile system  # build only
+./tools/deploy_game.sh system COM3                     # build, write factory app, boot
 ```
+
+Use the app-only deploy helper for this layout. The generic `build.sh upload/both`
+path is an Arduino upload and can also write the bootloader and partition table;
+it is not the update path for this two-firmware installation.
+
+Build the voice pet from PowerShell at the repository root:
+
+```powershell
+python tools/prepare_clawd_voice.py
+$voiceBuild = Join-Path (Get-Location) "build/clawd-voice"
+cmd /c tools\idf_env.bat idf.py -C reference/xiaozhi -B "$voiceBuild" set-target esp32s3 # first build
+cmd /c tools\idf_env.bat idf.py -C reference/xiaozhi -B "$voiceBuild" build
+python tools/install_voice_pet.py          # verify artifacts; dry run
+python tools/install_voice_pet.py --flash  # back up current slot/config, write ota_0 only
+```
+
+This uses XiaoZhi **v2.3.0** with ESP-IDF **5.5.3** and pinned dependencies.
+The installer requires the local full backup to verify the partition table, and
+checks the connected device before writing. Open CLAWD PET from the launcher after
+installation. Do not use plain `idf.py flash`: the generated flash arguments target
+`factory` and include bootloader/table writes. Detailed build notes are in
+[docs/clawd-pet-voice.md](docs/clawd-pet-voice.md).
 
 Board options are baked into `build.sh`. The non-default ones matter:
 
@@ -114,11 +163,28 @@ Board options are baked into `build.sh`. The non-default ones matter:
 | `FlashSize` | `16M` | onboard flash |
 | `PSRAM` | `opi` | onboard octal PSRAM |
 | `FlashMode` | `qio` | QIO 80MHz |
-| `PartitionScheme` | `app3M_fat9M_16MB` | 3MB app + 9.9MB FATFS for assets |
+| `PartitionScheme` | `custom` | `system/partitions.csv`, matching the installed factory / ota_0 / assets layout |
+
+`build.sh` defaults to a generic Arduino partition scheme, so the explicit
+`PARTITION_SCHEME=custom` above matters; `deploy_game.sh` sets it automatically.
+
+## Verification
+
+```bash
+python tools/native_checks.py      # execute real shared C++ logic on the host; requires g++
+python tools/preview_pet.py        # render the shared pet code; also needs Pillow
+python tools/preview_launcher.py   # Python preview of the launcher layout
+python tools/preview_readme.py     # regenerate README images from actual C++ drawing; needs Pillow
+```
+
+Checks cover photo scaling and crop boundaries, ring dragging and snapping,
+save migration, care, wardrobe persistence, accessory clipping in both RGB565 byte
+orders, button press/release feedback and UI pacing across timer wrap. Host renders
+complement device checks; they do not measure LCD transfer or touch-controller latency.
 
 ## The system
 
-The firmware that occupies `ota_0` is the project's own little system: it boots into
+The firmware that occupies `factory` is the project's own little system: it boots into
 a launcher ring of games, and each game is an independent module behind the `Game`
 interface. Adding one means writing a class and appending a pointer to `GAMES` in
 `system/system.ino`.
@@ -133,67 +199,65 @@ system/
 ├── game.h                the Game interface
 ├── game_clawd.{h,cpp}    tilt-controlled rolling clawd
 ├── game_tap.{h,cpp}      touch-controlled clawd tap
-├── game_pet.{h,cpp}      the tamagotchi: needs, growth, poking, the scrub game
-├── game_mon.{h,cpp}      the pocket mon: the egg, the two tracks, the evolution tree
+├── game_pet.{h,cpp}      CLAWD PET: care, egg, evolution, gestures and voice presentation
+├── outfits.{h,cpp}       twenty accessories over the existing pet body
+├── game_photos.{h,cpp}   SD-card photos and animations, fill / fit toggle
 ├── game_settings.{h,cpp} volume, and what is under the hood
 ├── power.{h,cpp}         the BQ27220 fuel gauge
 ├── clawd_sprite.h        the sprite + palette, shared by both games
 ├── assets_clawd.h        generated 2bpp sprite
 ├── assets_icons.h        generated per-app launcher icons
-├── assets_pet.h          generated per-stage pet bodies
+├── assets_mon.h          generated seven-form pet bodies
 ├── assets_font.h         generated 8x8 ASCII font
-└── partitions.csv        must match the stock layout — see Coexistence below
+└── partitions.csv        must match the installed layout — see Firmware slots below
 ```
 
-Each entry draws its own icon, and the three are poses of the same creature rather than
-props stuck onto it: leaning into a roll, one arm raised, ears up. Three copies of one
-standing pose, told apart only by the colour of the disc behind them, is not a launcher —
-but neither is a crate or a pair of headphones bolted on, which is what the first
-attempt did and what it looked like on the panel.
+The five launcher entries are CLAWD ROLL, CLAWD TAP, CLAWD PET, PHOTOS and SETTINGS.
+Each module draws its own icon; the pet has one entry for both care and voice.
 
 The battery sits in the top right, read from the BQ27220 gauge on the I2C bus rather
 than guessed from an ADC pin: it reports a state of charge and a pack voltage, and it
 turns red under 20%.
 
-**SETTINGS** is three pages behind a small arc menu. VOLUME is the assistant's level,
+**SETTINGS** has VOLUME, SYSTEM, NET and USB pages behind a small arc menu. VOLUME is the assistant's level,
 kept in the NVS key its own AudioCodec::Start() reads — see system/audio.h for why that
 key and not the codec's register, which the assistant rewrites on every boot. SYSTEM is
-the chip, memory, build and battery; NET is what the assistant is configured with. Both
-say plainly that they are read-only and, on NET, that the network belongs to the
-assistant: this firmware never joins one.
+the chip, memory, build and battery; NET shows stored assistant configuration. USB
+provides the SD-card access mode. The integrated voice pet handles assistant networking.
 
-**Controls.** Tilt the board left or right to step the carousel — one lean moves one
-place and then latches until the board is level again, so a held tilt does not
-free-run through the list. Tap an icon to play it, or tap the middle to play the
-selected one. Hold BOOT for a moment to come back from a game to the launcher; hold
-it longer *on* the launcher to hand the board back to the stock system. A ring in the
-bottom corner fills while you hold, so the gesture is discoverable.
+**Controls.** Drag a finger around the application ring to rotate it; release to snap
+to the nearest app. Tap an icon or the centre to open it. Tilt remains optional and
+is suppressed during touch. The home screen has no clock. Hold BOOT in a game to
+return home; in the voice pet a long press returns to the launcher firmware.
+
+**PHOTOS.** Tap to advance; hold for 650ms to toggle centre-cropped full-screen view
+and complete-image fit. The default fills the round panel, without a filename bar.
+Baseline JPEG, BMP and animated GIF are supported. Unsupported images show an error.
 
 ```bash
-./tools/deploy_game.sh system          # compile, flash into ota_0, boot it
+./tools/deploy_game.sh system          # update the launcher app in factory; keep ota_0
 ./tools/deploy_game.sh games/clawd-roll   # or deploy the standalone game sketch
 python tools/make_font.py              # regenerate the bitmap font
-python tools/make_pet_sprites.py       # regenerate the pet's bodies
-python tools/make_mon_sprites.py       # regenerate the mon's seven forms
+python tools/make_mon_sprites.py       # regenerate the shared pet's seven forms
 python tools/make_icon_sprites.py      # regenerate the three launcher icons
 python tools/make_icon.py              # regenerate the project icon
 
 python tools/preview_pet.py            # check the pet's layout before flashing it
 python tools/preview_icons.py          # the launcher icons, on the carousel's discs
 python tools/preview_launcher.py       # likewise for the carousel
-python tools/check_preview_sync.py     # the previews only verify anything while they
-                                       # still agree with the firmware's constants
+python tools/check_preview_sync.py     # run the real C++ regression checks
 ```
 
-Rendering bypasses LVGL completely: the firmware owns one 360×360 RGB565 framebuffer
-in PSRAM and pushes bands of it to the panel. That keeps the frame loop cheap and
-sidesteps the LVGL 8.x/9.x split between the two example trees. Each screen reports
-which rows it changed (`Game::dirtyY0/dirtyY1`) so a game that moves one sprite does
-not pay for a full-screen transfer every frame.
+The Arduino launcher renders directly into one 360×360 RGB565 framebuffer in PSRAM
+and pushes changed bands to the panel (`Game::dirtyY0/dirtyY1`). The ESP-IDF voice pet
+uses the same C++ drawing code through an LVGL 9 display adapter, with a drawing
+buffer and a stable image buffer in PSRAM; changed rows are copied and invalidated.
+Touch sampling runs independently of drawing, including while the display is idle.
 
-**Tilt input.** The axis perpendicular to the screen is found at boot (it is the one
-carrying gravity while the board lies flat), so only the in-plane mapping is
-hard-coded. There is deliberately *no* zeroing calibration: with gravity-sensed tilt,
+**Tilt input.** This board uses a fixed measured axis mapping: Z is perpendicular
+to the screen, screen X is inverted sensor X, and screen Y is sensor Y. A boot-time
+average is logged for diagnostics; it does not select the mapping. There is no
+boot-angle zeroing calibration: with gravity-sensed tilt,
 level *is* zero, and subtracting a boot-time snapshot only bakes in whatever angle
 the board happened to be held at — worse, the constant residual that leaves behind
 pins a ball against a wall. Instead a slow auto-trim removes the accelerometer's
@@ -226,39 +290,27 @@ and vanishes. Tap it to score, three time-outs and it is over. It exists as much
 exercise the game interface as to be played — between it and clawd-roll both input
 paths and both ends of the drawing cost are covered.
 
-### clawd-pet
+### CLAWD PET
 
-A tamagotchi. Four needs — hunger, happiness, energy, cleanliness — all decay and all
-read "fuller is better"; health is derived from them rather than kept separately, so
-neglect shows up as illness instead of as a fifth bar; and the pet grows through four
-stages, gated on accumulated care rather than on age alone. It is saved to NVS, and
-time spent with the launcher or another app is accounted for when you come back.
+The former clawd-pet and pixel-mon are one app. It combines the touch/drag/poke and
+shake-to-scrub interaction with eggs, two evolution tracks and seven forms. The
+same care and drawing source runs in the Arduino launcher and the ESP-IDF voice
+companion. When no current save exists, migration prefers the old PIXEL MON save,
+then the original pet save. Old saves are retained; new progress uses `clawdpet2/blob`.
 
-He is clawd rather than a sprite drawn for the purpose. `tools/make_pet_sprites.py`
-renders the same artwork the rolling game uses at one size per life stage — so growing
-up is something you can see — and punches the eyes out of it, recording where they
-were. `game_pet.cpp` draws its own eyes into that gap every frame, which is how four
-bodies cover seven moods: idle, happy, eating, asleep, being scrubbed, ill, and cross.
-
-It is meant to be handled. Tap him and he looks your way; tap again and he is pleased;
-keep it up and he tells you to stop. Press and hold to pick him up and put him
-somewhere else on the screen, and he drifts back when you let go. **SCRUB** starts a
-mini-game: hold the badge and shake it to work the dirt off, against a five-blob
-meter and a clock. The accelerometer is muted for a moment after every touch, because
-tapping the panel spikes it hard enough to read as a shake.
-
-### pixel-mon
-
-A pocket mon: an egg, and a branching evolution tree that decides what hatches from it
-turns into. The care model is the pet's — four needs, derived health, self-correcting
-sickness — because that part is already right. What this app is for is the two things a
-Tamagotchi has and a pet did not need:
+The optional integrated voice version uses XiaoZhi's open client with this board's
+existing hardware support. The on-screen creature listens, responds with expressions
+and subtitles, and exposes its current needs through a read-only MCP tool.
+Press BOOT once or tap the top of the pet page to start/stop a conversation; hold
+BOOT to return home. Care buttons work while chat is idle, and the idle header no
+longer shows “待命”.
+See [CLAWD PET voice build and controls](docs/clawd-pet-voice.md).
 
 **The egg.** The first screen is an egg, drawn rather than a sprite. It hatches while it
 is *warm*, which means energy and cleanliness both above 40, so the needs are
 load-bearing before there is anything to look after: about three minutes of a warm egg,
 plus four points a poke. Tapping it makes it wobble; something taps back. Until it
-hatches the only live menu items are PET and NAME.
+hatches the live menu items are PET and STYLE; rename remains inside STYLE.
 
 **The tree.** Two tracks accumulate in the background, from the *state* of the needs
 rather than from one button pressed at the right moment:
@@ -284,61 +336,71 @@ serial line prints joy, vigor and the care average, so a surprising result can b
 rather than argued with.
 
 **Sleep is the only thing that restores energy**, at nine points a minute, and the mon
-wakes itself when it is full. That is a deliberate cost: resting is one of the two ways
-into the vigor branch, and while it sleeps the other four actions are blocked.
+wakes itself when it is full. Resting contributes to the vigor branch; while asleep,
+FEED, PLAY, PET and SCRUB are disabled, while REST and STYLE remain available.
 
 **The dex.** The bottom line reads `GROW 3/6  SEEN 2/7` — the first half names whichever
 condition is actually holding evolution up, and switches to `AGE 4m` once care is done and
 only the clock is left. `SEEN` is a bitmask that survives a new egg, which is the point of
-the last menu slot: once the mon is an adult it stops saying NAME and says EGG, and
-starting over is how the other five forms get found.
+the wardrobe's secondary action: once the mon is an adult, RENAME becomes NEW EGG.
+Starting over is how the other five forms get found.
 
 The forms are clawd's silhouette at one size per stage with the form's colour and a
-one-pixel outline, plus a mark the firmware draws on the head — a leaf, a drop, a flower,
+one-pixel outline. ORIGINAL adds the form's head mark — a leaf, a drop, a flower,
 a crest, a halo, two dim puffs. `tools/make_mon_sprites.py` regenerates the bitmaps; the
 marks are code, because at this size a mark is three shapes and a bitmap is another
 1.5 KB per form.
 
-## Coexistence: our launcher and the XiaoZhi assistant
+**Wardrobe.** STYLE opens twenty pixel accessories, plus ORIGINAL: a flower,
+hard hat, headphones, thought bubble, bubbles, sleeping cap, glasses, book,
+delivery bag, bow, crown, beret, halo, star, wizard hat, heart, cap, earmuffs,
+rainbow and antenna. Swipe the
+preview or use the arrows, choose WEAR to save or BACK to cancel. Every accessory
+uses the same existing body dimensions, eyes and voice expression; it never scales
+or replaces the creature. The GIF references are kept in `assets/clawd-gifs/`, while
+`system/outfits.cpp` draws the lightweight accessories directly. Selection uses the
+independent `clawdpet2/outfit` key, preserving the original care-save layout.
 
-The board ships with **two firmwares**, and this project preserves that arrangement rather than inventing one:
+## Firmware slots
+
+The current installation has two app images. The Arduino launcher keeps games,
+photos and settings in `factory`; the integrated CLAWD PET runs care and XiaoZhi
+voice together in `ota_0`. Installing it **replaces the original XiaoZhi 2.2.4 app**
+in that slot, after backing it up, while retaining the shared fonts and speech models.
 
 ```
-factory  app  0x020000  6.57MB   the main application  <- our launcher lives here
-ota_0    app  0x6c0000  4.00MB   xiaozhi 2.2.4         <- the assistant, untouched
-assets   data 0xac0000  4.00MB   fonts + speech models
+factory  app   0x020000  6.57MiB   Arduino launcher, games, photos, settings
+ota_0    app   0x6c0000  4.00MiB   CLAWD PET + XiaoZhi v2.3.0 voice client
+assets   data  0xac0000  4.00MiB   existing fonts + speech models, preserved
 ```
 
-`ota_0` is **not spare space**. It holds the XiaoZhi voice assistant as a complete
-standalone firmware — the board dump has an app description at that offset reading
-`project=xiaozhi version=2.2.4`. Treating it as an empty slot and writing our own
-firmware there destroys the assistant, and worse, it does not fail quietly: the main
-application still switches to `ota_0` when you tap XiaoZhi, finds something that is
-not the assistant, and the device reboots endlessly.
-
-Switching between the two is Waveshare's own mechanism, and it needs only the 8 KB
-`otadata` selector — about a second, versus the ~70 s a full reflash costs:
+Switching app images changes the 8KiB `otadata` boot selector and restarts;
+care interactions and conversations then stay inside the same pet app.
 
 | | |
 |---|---|
-| launcher → tap **XIAOZHI** (or hold BOOT on the launcher) | writes otadata selecting `ota_0`, restarts → the assistant |
-| in the assistant → **hold BOOT** | it sets `factory` as the boot partition and restarts → our launcher |
+| launcher → open **CLAWD PET** | detects the installed voice pet, selects `ota_0`, restarts into it |
+| voice pet → **hold BOOT** | saves care progress, selects `factory`, restarts into our launcher |
 
 Both directions live in the firmwares themselves; neither needs a host computer, a
-reflash or a power cycle. Our launcher is what boots by default, because erased
-otadata falls back to `factory`.
+reflash or a power cycle. Erased `otadata` falls back to `factory`; a selected voice
+pet continues to boot until the launcher is selected again. Without the voice image,
+the launcher entry runs the local care-only pet.
 
 ```bash
-python tools/switch_slot.py home     # boot our launcher (erases otadata)
-python tools/switch_slot.py stock    # boot the assistant (selects ota_0)
-python tools/switch_slot.py status   # report what is currently selected
-python tools/install_stack.py        # (re)install both; --dry-run to preview
+python tools/switch_slot.py home     # select factory / our launcher
+python tools/switch_slot.py stock    # legacy command name: selects ota_0 / installed voice pet
+python tools/switch_slot.py status   # read the boot selector, then reboot the application
 ```
 
-The assistant image is recovered from the byte-exact dump in `backup/`, so
-`tools/install_stack.py` can put it back at any time. `tools/restore_stock.sh` goes
-further and rewrites the whole 16 MB dump verbatim, restoring the original firmware
-in every slot. The bootloader is never rewritten — it reads the table at runtime.
+For updates, use `deploy_game.sh system` for the launcher and
+`install_voice_pet.py --flash` for the voice pet. These app updates preserve the
+bootloader, partition table and shared assets.
+
+`install_stack.py` is a **legacy restoration tool**: it installs the launcher and
+restores the original assistant from `backup/`, overwriting the custom voice pet.
+It is not a voice-pet updater. `restore_stock.sh` restores the whole 16MiB image,
+including the original main app, assistant, bootloader, table and saved configuration.
 
 ### Why the games are not entries in the stock system's launcher
 
@@ -357,13 +419,13 @@ ships:
 Upstream ESP-Brookesia does have a runtime-app mechanism (`runtime/brookesia_runtime_js`,
 `_lua`, `_wasm`, `_elf`, plus `app/brookesia_app_store`), so a system built from
 source *could* list the game in a launcher. That is the path to take if a launcher is
-wanted — but it means building our own system, which would not contain the stock
-apps such as XiaoZhi.
+wanted, but the closed stock apps would still need replacements. This project uses
+its own launcher and integrates the open XiaoZhi client into CLAWD PET instead.
 
-This works because `games/clawd-roll/partitions.csv` is byte-identical to the table
-already on the device — the offsets were read back from the stock bootloader's own
-log, and the build output is parsed to confirm it before anything is flashed. A
-mismatch would send runtime partition lookups to the wrong regions.
+`system/partitions.csv` and the standalone game's table encode the existing layout.
+The voice installer checks its generated table against both the full backup and
+the connected board. The app-only launcher deploy assumes this layout is already
+installed; an incompatible table would send runtime lookups to the wrong regions.
 
 The `otadata` entry format has three traps worth knowing if you touch the code:
 the checksum covers **only the 4-byte `ota_seq`**, not the whole struct; ESP-IDF's
@@ -373,10 +435,14 @@ and `ota_state` must be `VALID`, because anything the bootloader finds in
 
 ## Back up before you flash
 
-Dump the whole flash first — it is the only way back to a byte-exact stock state:
+Before modifying a stock device, save its whole flash so it can be restored
+byte-for-byte. Keep that original backup rather than overwriting it with a later
+custom installation. Backups include device configuration and are gitignored.
 
 ```bash
-esptool --port COM3 --baud 921600 read_flash 0 0x1000000 backup/1.85B-stock-16MB.bin
+mkdir -p backup
+esptool --chip esp32s3 --port COM3 --baud 921600 --after watchdog_reset \
+    read_flash 0 0x1000000 backup/1.85B-stock-16MB.bin
 ```
 
 Then restore any time with:
@@ -407,12 +473,10 @@ library's `Touch_SetAutoSleep(false)` writes the correct value without the contr
 reset that the vendor function also performs, and `input::init()` calls it.
 
 **The native USB port can strand the chip in download mode.** The USB-C connector
-goes straight to the chip's USB-Serial/JTAG peripheral — there is no USB-to-UART
-bridge and no auto-reset transistor circuit. On the chip, asserting **DTR requests
-download mode on the next reset**, and pyserial asserts DTR by default when a port
-is opened. So a naive serial script can leave the board sitting at
-`boot:0x2 (DOWNLOAD(USB/UART0)) / waiting for download` — black screen, unresponsive,
-and plain resets keep landing back in download mode.
+goes straight to USB-Serial/JTAG. On this badge native HWCDC requires DTR asserted
+for incoming commands; DTR alone does not reset it. Toggling RTS with DTR asserted
+can reset into the ROM download loader. Keep RTS inactive for monitoring and never
+use a reset-based esptool probe just to check whether the application is running.
 
 Recovery, in order of convenience:
 
@@ -424,24 +488,15 @@ Recovery, in order of convenience:
        --after watchdog_reset --connect-attempts 1 read_mac
    ```
 
-   A watchdog reset takes a different path than the RTS/EN reset, so it does not
-   re-enter download mode. Verify success by attempting a connect with **no reset** —
-   *if it times out, the application is running* (a live app never answers the ROM's
-   sync handshake):
-
-   ```bash
-   esptool --chip esp32s3 --port COM3 --before no_reset --after no_reset read_mac
-   # "Write timeout" / connection failure here means SUCCESS
-   ```
-
-   Careful: a plain `esptool ... read_mac` uses `--before default_reset`, which puts
-   the chip back into download mode. Only the `no_reset` form is a safe probe.
+   A watchdog reset takes a different path than the RTS/EN reset. Verify that the
+   app is running with `serial_monitor.py` and its startup logs. A failed ROM probe
+   alone cannot distinguish a running app from a disconnected or unavailable port.
 
 2. **Cold power cycle** — always works: unplug USB (and if a battery is attached,
    long-press PWR 2s to power off, then short-press to power on). A cold boot samples
    the strapping pins correctly with GPIO0 pulled high.
 
-Use `tools/serial_monitor.py` instead of ad-hoc pyserial code — it never asserts DTR
+Use `tools/serial_monitor.py` instead of ad-hoc pyserial code — it enables DTR for native CDC
 and never pulses RTS, so it attaches and detaches without disturbing a running app:
 
 ```bash
@@ -460,7 +515,7 @@ console but the ROM banner.
 Always restore with `keep`:
 
 ```bash
-esptool --chip esp32s3 --port COM3 --baud 921600 write_flash \
+esptool --chip esp32s3 --port COM3 --baud 921600 --after watchdog_reset write_flash \
     --flash_mode keep --flash_size keep --flash_freq keep --verify \
     0x0 backup/1.85B-stock-16MB.bin
 ```
@@ -474,10 +529,11 @@ ESP-IDF examples and the stock system use **LVGL 9.5.0**. The APIs are not
 compatible (`lv_scr_act()` vs `lv_screen_active()`, the display/indev API was
 reworked). Check which version any example you copy was written for.
 
-**Flashing replaces the whole system, not an app.** The stock firmware is a single
-firmware image, not an OS with installed apps. Flash a demo sketch and the stock UI
-is gone — there is no "exit" gesture, and a power cycle boots straight back into the
-demo. To get the stock system back, reflash it (`tools/restore_stock.sh`).
+**Generic example uploads can replace the installed layout.** The stock system is
+a compiled app, not an OS that installs arbitrary Arduino sketches. An ordinary
+demo upload may also rewrite the bootloader and partition table. This project's
+app-only update tools use the existing slots; a full stock restore deliberately
+replaces both custom apps and their saved configuration.
 
 **Driving ESP-IDF scripts from Git Bash.** Two traps:
 
@@ -493,13 +549,17 @@ header. Details in [docs/hardware.md](docs/hardware.md).
 
 **3.3V logic.** Classic 5V Arduino boards need level shifting before connecting.
 
-## Roadmap
+## Current status and next work
 
-- [ ] Decide the first mini-game and the badge's content model
-- [ ] Project skeleton with a launcher that switches between games
-- [ ] IMU input layer — tilt / shake / flip gestures
-- [ ] Badge assets: animated frames from SD card or the SPIFFS assets partition
-- [ ] Optional: rebuild and extend the stock Brookesia system with ESP-IDF
+- [x] Touch-drag launcher ring, snapping, tilt support and five app entries
+- [x] CLAWD ROLL and CLAWD TAP mini-games
+- [x] Unified CLAWD PET care, eggs, seven evolution forms and migrated saves
+- [x] Integrated XiaoZhi voice, expressions, Chinese subtitles and shared pet state
+- [x] Twenty accessories with unchanged body proportions and persistent selection
+- [x] SD-card photos / GIFs with full-screen crop and complete-image fit
+- [x] Independent touch scanning, wake on contact and visible button feedback
+- [ ] Longer battery-life and simultaneous voice/care soak tests
+- [ ] Broader media-file and SD-card compatibility checks
 
 ## License
 

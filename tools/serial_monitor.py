@@ -1,33 +1,11 @@
 #!/usr/bin/env python3
-"""Safe serial monitor for boards whose USB-C goes straight to the chip's native
-USB-Serial/JTAG (ESP32-S3/C3/C6/H2/P4 with `USB mode: USB-Serial/JTAG`).
+"""Bounded native USB-Serial/JTAG monitor, with no RTS reset pulses.
 
-Why this exists
----------------
-On these boards the DTR/RTS lines are not wired to an external auto-reset
-transistor circuit -- the chip's USB-Serial/JTAG peripheral interprets them, and
-asserting DTR requests *download mode* on the next reset. Naive pyserial use is
-dangerous in two ways:
+On this badge native HWCDC needs DTR asserted for host commands. DTR alone is
+not the reset gesture; toggling RTS with DTR asserted can enter the ROM loader.
+Set both lines before opening, enable DTR and keep RTS inactive throughout.
 
-  1. pyserial asserts DTR by default when a port is opened. Merely opening the
-     port can therefore drive the chip toward download mode.
-  2. Toggling RTS to "reset" the chip while DTR is still asserted resets it into
-     the ROM bootloader instead of the application. The screen goes black and the
-     device looks dead, but it is only sitting at "waiting for download".
-
-Once the chip is in that state it can be sticky: plain resets keep landing back in
-download mode, and the only reliable recovery is a cold power cycle (unplug USB,
-and if a battery is attached, power-cycle with the PWR button).
-
-This script deliberately never asserts DTR and never pulses RTS, so it can be
-attached and detached freely while the application runs.
-
-Usage
------
-    tools/serial_monitor.py [port] [baud]        # default COM3 115200
-    tools/serial_monitor.py COM3 115200 --seconds 20
-
-Quit with Ctrl-C.
+Usage: python tools/serial_monitor.py [COM3] [115200] [--seconds 20]
 """
 
 import argparse
@@ -58,9 +36,8 @@ def main() -> int:
     s.timeout = 0.5
     s.dsrdtr = False
     s.rtscts = False
-    # Set both control lines to their idle state *before* opening, so the open
-    # itself cannot pull the chip into download mode. False == deasserted.
-    s.dtr = False
+    # Enable native CDC host reception while leaving reset inactive.
+    s.dtr = True
     s.rts = False
 
     try:
@@ -90,10 +67,8 @@ def main() -> int:
     except KeyboardInterrupt:
         pass
     finally:
-        # Leave the lines in the idle state; do not toggle anything on the way out.
+        # Close without a reset pulse.
         try:
-            s.dtr = False
-            s.rts = False
             s.close()
         except Exception:
             pass

@@ -12,6 +12,8 @@
 #include "gfx.h"
 #include "input.h"
 #include "media.h"
+#include "photo_blit.h"
+#include "esp_heap_caps.h"
 
 static const char *const PHOTO_EXTS[] = { "jpg", "jpeg", "bmp", "gif" };
 static const int PHOTO_EXT_COUNT = 4;
@@ -22,18 +24,10 @@ static const uint16_t COL_TEXT = PX(RGB565(0xEC, 0xEC, 0xF4));
 static const uint16_t COL_WARN = PX(RGB565(0xE0, 0x50, 0x50));
 static const uint16_t COL_ACCENT = PX(RGB565(0x7A, 0x8B, 0xF0));
 
-// How an image of w by h lands on the panel: centred, scaled to fit, never cropped.
-struct Fit { float scale; int offX, offY; };
-
-static Fit fitFor(int w, int h)
-{
-    Fit f;
-    const float s = fminf((float)SCR_W / (float)w, (float)SCR_H / (float)h);
-    f.scale = s;
-    f.offX = (SCR_W - (int)(w * s)) / 2;
-    f.offY = (SCR_H - (int)(h * s)) / 2;
-    return f;
-}
+// Round badge: fill by default; hold a picture to toggle a complete-image view.
+using photo::Fit;
+static bool fillScreen = true;
+static Fit fitFor(int w, int h) { return photo::fitFor(w, h, fillScreen); }
 
 // A running checksum of what was decoded. It cannot show the picture, but it does say
 // whether there was one: zero means a black frame, and two runs of the same file agreeing
@@ -42,22 +36,7 @@ static uint32_t pixelSum = 0;
 
 static void blitLine(const uint16_t *px, int rx, int ry, int rw, const Fit &fit)
 {
-    const int dy0 = fit.offY + (int)(ry * fit.scale);
-    const int dy1 = fit.offY + (int)((ry + 1) * fit.scale);
-    const int dx0 = fit.offX + (int)(rx * fit.scale);
-    const int dx1 = fit.offX + (int)((rx + rw) * fit.scale);
-    for (int y = dy0; y < dy1; y++) {
-        if ((unsigned)y >= (unsigned)SCR_H) continue;
-        uint16_t *out = fb + (size_t)y * SCR_W;
-        for (int x = dx0; x < dx1; x++) {
-            if ((unsigned)x >= (unsigned)SCR_W) continue;
-            const int sx = rx + (int)((x - fit.offX) / fit.scale);
-            if (sx < rx || sx >= rx + rw) continue;
-            const uint16_t c = px[sx - rx];
-            pixelSum += c;
-            out[x] = PX(c);
-        }
-    }
+    photo::blitLine(fb, px, rx, ry, rw, fit, &pixelSum);
 }
 
 // --- BMP ----------------------------------------------------------------------------
@@ -137,7 +116,8 @@ static int jpegDrawCb(JPEGDRAW *d)
 {
     jpegDrew = true;
     for (int i = 0; i < d->iHeight; i++) {
-        blitLine(d->pPixels + (size_t)i * d->iWidth, d->x, d->y + i, d->iWidth, jpegFit);
+        blitLine(d->pPixels + (size_t)i * d->iWidth, d->x, d->y + i,
+                 d->iWidthUsed, jpegFit);
     }
     return 1;
 }
@@ -166,12 +146,12 @@ static bool showJpeg(const char *path)
     else if (w > SCR_W * 4 && h > SCR_H * 4) { options = JPEG_SCALE_QUARTER; shift = 2; }
     else if (w > SCR_W * 2 && h > SCR_H * 2) { options = JPEG_SCALE_HALF; shift = 1; }
 
-    jpegFit = fitFor(w >> shift, h >> shift);
+    const int round = (1 << shift) - 1;
+    jpegFit = fitFor((w + round) >> shift, (h + round) >> shift);
     jpegDrew = false;
     jpeg->setPixelType(RGB565_LITTLE_ENDIAN);
     const int ok = jpeg->decode(0, 0, options);
     jpeg->close();
-    f.close();
     f.close();
     Serial.printf("[photos] jpeg %dx%d -> %dx%d (1/%d), decode %s, %s\n", w, h, w >> shift,
                   h >> shift, 1 << shift, ok ? "ok" : "failed",
@@ -189,9 +169,23 @@ static Fit gifFit;
 static bool gifOpen = false;
 static bool gifDrew = false;
 
+static void *gifAlloc(uint32_t size)
+{
+    return heap_caps_calloc(1, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+}
+
+static void closeGif()
+{
+    if (!gifOpen) return;
+    gif->close();
+    gif->freeFrameBuf(free);
+    gifOpen = false;
+}
+
 static void gifDrawCb(GIFDRAW *d)
 {
     gifDrew = true;
+    // GIF_DRAW_COOKED is explicitly enabled below: this is RGB565, not palette indices.
     // pPixels is declared as bytes but in this mode it is 16-bit pixels, one row of
     // iWidth of them, at the frame's own offset in the canvas.
     blitLine((const uint16_t *)d->pPixels, d->iX, d->iY + d->y, d->iWidth, gifFit);
@@ -243,16 +237,22 @@ static bool openGif(const char *path)
     }
     gifFit = fitFor(gif->getCanvasWidth(), gif->getCanvasHeight());
     gifOpen = true;
+    const int w = gif->getCanvasWidth(), h = gif->getCanvasHeight();
+    if (w <= 0 || h <= 0 || (uint64_t)w * (h + 3) > 2 * 1024 * 1024 ||
+        gif->allocFrameBuf(gifAlloc) != GIF_SUCCESS) {
+        Serial.println("[photos] gif: canvas too large or no PSRAM");
+        closeGif();
+        return false;
+    }
+    gif->setDrawType(GIF_DRAW_COOKED);
     return true;
 }
 
 // --- the app ------------------------------------------------------------------------
 void GamePhotos::showCurrent()
 {
-    if (gifOpen) {
-        gif->close();
-        gifOpen = false;
-    }
+    closeGif();
+    gfx::clear(COL_BG);
     failed = false;
     pixelSum = 0;
     frameSec = 0.0f;
@@ -269,7 +269,8 @@ void GamePhotos::showCurrent()
     } else if (!strcasecmp(ext, "gif")) {
         if (openGif(path)) {
             gifDrew = false;
-            ok = gif->playFrame(false, &frameMs) != 0 && gifDrew;
+            gif->playFrame(false, &frameMs);
+            ok = gifDrew;
         }
     } else {
         ok = showJpeg(path);
@@ -281,6 +282,7 @@ void GamePhotos::showCurrent()
 
 void GamePhotos::enter()
 {
+    longPressFired = false;
     failed = false;
     pixelSum = 0;
     if (!media::begin()) {
@@ -295,19 +297,27 @@ void GamePhotos::enter()
 
 void GamePhotos::leave()
 {
-    if (gifOpen) {
-        gif->close();
-        gifOpen = false;
-    }
+    closeGif();
     media::end();
     gfx::clear(COL_BG);
 }
 
 void GamePhotos::update(float dt)
 {
-    if (input::tapped() && media::count() > 0) {
-        index = (index + 1) % media::count();
-        showCurrent();
+    if (media::count() > 0) {
+        if (input::touchDown() && input::touchHeldMs() >= 650 && !longPressFired) {
+            longPressFired = true;
+            fillScreen = !fillScreen;
+            Serial.printf("[photos] view: %s\n", fillScreen ? "fill" : "fit");
+            showCurrent();
+        }
+        if (input::tapped()) {
+            if (!longPressFired) {
+                index = (index + 1) % media::count();
+                showCurrent();
+            }
+            longPressFired = false;
+        }
     }
 
     // An animated GIF keeps its file open and is stepped from here; a still one has one
@@ -317,8 +327,8 @@ void GamePhotos::update(float dt)
         if (frameSec * 1000.0f >= (float)(frameMs > 0 ? frameMs : 100)) {
             frameSec = 0.0f;
             if (!gif->playFrame(false, &frameMs)) {
-                gif->close();
-                gifOpen = false;
+                // Keep animated badges playing instead of stopping after one pass.
+                gif->reset();
             }
         }
     }
@@ -335,10 +345,15 @@ void GamePhotos::render()
         gfx::textCentered("on the card, then come back", 210, COL_DIM, 1);
         return;
     }
-    gfx::fillRect(0, SCR_H - 22, SCR_W, 22, COL_BG);
-    char line[32];
-    snprintf(line, sizeof(line), "%.24s", media::nameAt(index));
-    gfx::textCentered(line, SCR_H - 17, failed ? COL_WARN : COL_TEXT, 1);
+    if (failed) {
+        gfx::clear(COL_BG);
+        gfx::textCentered("cannot show image", 140, COL_WARN, 1);
+        gfx::textCentered("try a baseline JPG or BMP", 165, COL_TEXT, 1);
+        gfx::textCentered("tap for next picture", 190, COL_DIM, 1);
+        char line[32];
+        snprintf(line, sizeof(line), "%.24s", media::nameAt(index));
+        gfx::textCentered(line, 215, COL_DIM, 1);
+    }
 }
 
 void GamePhotos::drawIcon(float cx, float cy, float size) const

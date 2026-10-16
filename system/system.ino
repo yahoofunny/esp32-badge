@@ -6,9 +6,8 @@
  * behind the Game interface. Adding one means writing a class and appending a
  * pointer to GAMES below.
  *
- * This firmware lives in the idle `ota_0` partition; the stock Waveshare system
- * (which includes the XiaoZhi AI app) stays untouched in `factory`. Holding BOOT on
- * the launcher hands the board back to it. See tools/switch_slot.py and the README.
+ * This launcher lives in `factory`. `ota_0` holds the voice companion (or the
+ * original XiaoZhi image before installing it). See docs/clawd-pet-voice.md.
  *
  * Rendering is direct: one full-screen RGB565 framebuffer in PSRAM, written by the
  * gfx layer and pushed to the panel by the board driver. No LVGL, which keeps the
@@ -30,7 +29,6 @@
 #include "esp_random.h"
 #include "game.h"
 #include "game_clawd.h"
-#include "game_mon.h"
 #include "game_pet.h"
 #include "game_photos.h"
 #include "game_settings.h"
@@ -46,19 +44,15 @@
 // ------------------------------------------------------------------- games ---
 // The whole registry. Order is the order they appear on the launcher ring.
 //
-// Entries are "screens", not strictly games: GameXiaoZhi is an action that hands the
-// board over to the stock system. The launcher only needs each one to name itself,
-// draw an icon, and be enterable.
+// CLAWD PET enters the integrated voice companion when that image is installed;
+// otherwise the same care/evolution model runs locally in this launcher.
 static GameClawd   g_clawd;
 static GameTap     g_tap;
 static GamePet     g_pet;
-static GameMon     g_mon;
-static GameXiaoZhi g_xiaozhi;
 static GameSettings g_settings;
 static GamePhotos   g_photos;
 
-static Game *const GAMES[] = { &g_clawd, &g_tap, &g_pet, &g_mon, &g_photos,
-                               &g_xiaozhi, &g_settings };
+static Game *const GAMES[] = { &g_clawd, &g_tap, &g_pet, &g_photos, &g_settings };
 static const int   GAME_COUNT = (int)(sizeof(GAMES) / sizeof(GAMES[0]));
 
 // ----------------------------------------------------------------- screens ---
@@ -237,6 +231,22 @@ void loop()
                         settimeofday(&tv, nullptr);
                         sysclock::writeFromSystem();
                     }
+                } else if (!strcmp(cmd, "P")) {
+                    if (active) active->leave();
+                    active = &g_photos;
+                    active->enter();
+                    screen = SCREEN_GAME;
+                    Serial.println("[sys] diagnostics: PHOTOS opened");
+                } else if (!strcmp(cmd, "H")) {
+                    if (active) active->leave();
+                    active = nullptr;
+                    screen = SCREEN_LAUNCHER;
+                    Serial.println("[sys] diagnostics: launcher");
+                } else if (!strcmp(cmd, "D")) {
+                    Serial.printf("[sys] screen=%s app=%s heap=%u internal=%u psram=%u\n",
+                        screen == SCREEN_LAUNCHER ? "launcher" : "app",
+                        active ? active->name() : "none", ESP.getFreeHeap(),
+                        heap_caps_get_free_size(MALLOC_CAP_INTERNAL), ESP.getFreePsram());
                 }
                 n = 0;
             } else if (n < 23) {

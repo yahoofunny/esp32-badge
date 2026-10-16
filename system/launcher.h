@@ -5,11 +5,9 @@
 // The home screen: games arranged on a carousel ring, with the selected entry
 // parked at the top.
 //
-// Interaction is tilt-first, because that is what this device has: leaning the
-// board past a threshold steps the carousel one place and then latches until the
-// board comes back level, so a single lean moves exactly one game rather than
-// spinning through them. Touching an icon launches it directly, which makes the
-// whole thing usable without touching the tilt at all.
+// Drag along the orbit to rotate the apps, then release to snap to the nearest.
+// A drag never launches an app; a tap on an icon or the centre does. Tilt remains
+// available as an alternative and is suppressed while a finger is on the screen.
 namespace launcher {
 
 void begin(Game *const *games, int count);

@@ -8,82 +8,107 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "Display_ST77916.h"
-#include "esp_random.h"
-#include "assets_icons.h"
+#include "assets_mon.h"
 #include "clock.h"
-#include "assets_pet.h"
+#include "esp_random.h"
 #include "gfx.h"
 #include "input.h"
+#include "sound.h"
+#include "outfits.h"
+#ifdef ARDUINO_ARCH_ESP32
+#include "esp_ota_ops.h"
+#include "esp_app_format.h"
+#endif
+
+using namespace mon;
 
 // --------------------------------------------------------------- the numbers ---
-// Decay is quoted per minute, as in the original's config. These are faster than a
-// real Tamagotchi's because a badge is held for minutes at a time, not lived with: a
-// bar left alone empties in roughly an hour and a half.
+// The needs are the pet's, at the pet's rates: a bar left alone empties in about an
+// hour and a half, which suits a badge that is picked up for ten minutes at a time.
 static const float RATE_HUNGER      = 1.2f;
 static const float RATE_HAPPINESS   = 0.9f;
 static const float RATE_ENERGY      = 0.7f;
 static const float RATE_CLEANLINESS = 0.6f;
-static const float SLEEP_ENERGY_PER_MIN = 2.0f;
+// Sleep is the only thing that restores energy, so it has to be fast enough to be worth
+// doing. At two points a minute a nap from empty to full is half an hour of watching a bar
+// not move, which is not a mechanic but a punishment; nine fills it in about twelve
+// minutes, which is a decision with a cost you can actually feel.
+static const float SLEEP_ENERGY_PER_MIN = 9.0f;
 static const float SLEEP_HUNGER_SCALE   = 0.5f;
+static const float HEALTH_DRAG_PER_MIN  = 0.10f;
 
-// Health is not maintained directly; it drags towards the average of the four needs.
-static const float HEALTH_DRAG_PER_MIN = 0.10f;
-
-// Sickness begins and ends on its own, from health and cleanliness.
 static const float SICK_AT_HEALTH      = 30.0f;
 static const float SICK_AT_CLEANLINESS = 20.0f;
 static const float WELL_AT_HEALTH      = 60.0f;
 static const float WELL_AT_CLEANLINESS = 50.0f;
 
-// Growth. Care only accrues while the pet is in good shape, so a pet that is merely
-// old does not grow up.
 static const float CARE_PER_MIN  = 1.0f;
 static const float CARE_GOOD_AVG = 70.0f;
-struct StageGate { uint32_t ageSec; float care; };
-static const StageGate GATES[3] = {
-    {  15UL * 60,  20.0f },   // baby  -> child
-    { 120UL * 60, 120.0f },   // child -> teen
-    { 300UL * 60, 300.0f },   // teen  -> adult
-};
-static const char *const STAGE_NAMES[4] = { "BABY", "CHILD", "TEEN", "ADULT" };
+
+// The egg. Warmth is the state of the needs rather than a separate thing to mind: a
+// cold, grubby egg does not progress, which is why the needs are load-bearing before
+// there is a creature to look after. About three minutes of a warm egg hatches it,
+// which is short on purpose -- an egg that takes a day is an egg that gets skipped.
+static const float HATCH_WARM_ENERGY = 40.0f;
+static const float HATCH_WARM_CLEAN  = 40.0f;
+static const float HATCH_PER_MIN     = 34.0f;
+static const float HATCH_PER_POKE    = 4.0f;
+static const int   HATCH_CRACK1      = 34;   // percent at which the shell starts to fail
+static const int   HATCH_CRACK2      = 67;
+
+// The two branch tracks. Both always creep up, so the branch is decided by which one
+// is *ahead* rather than by whether the player remembered to press a particular button
+// once. Resting and scrubbing feed vigor; playing and being poked feed joy.
+static const float TRACK_BASE      = 0.35f;   // what a neglected mon still accrues
+static const float VIGOR_REST_MIN  = 0.6f;    // per minute asleep
+static const float VIGOR_SCRUB     = 3.0f;    // for a finished shake game
+static const float JOY_PLAY        = 1.5f;
+static const float JOY_PET         = 1.0f;
+
+// The gates are deliberately short. A badge is picked up for ten minutes at a time, so
+// an evolution that needs an hour of good care is an evolution that never happens; these
+// are sized so that one focused session reaches the child form and a second reaches an
+// adult one.
+struct Gate { uint32_t ageSec; float care; };
+static const Gate GATE_CHILD = {   5UL * 60,  6.0f };
+static const Gate GATE_ADULT = {  20UL * 60, 25.0f };
+static const float NEGLECT_CARE_AVG = 45.0f;   // below this, the adult form is DUSK
+
+// A branch is "balanced" -- and so takes the rare form -- when the two tracks are
+// within this fraction of their sum of each other.
+static const float BALANCE_FRAC = 0.20f;
 
 static const uint32_t SAVE_PERIOD_MS   = 15000;
 static const uint32_t THOUGHT_EVERY_MS = 40000;
+// How long a thought stays on screen. thoughtAgeSec has always been counted but nothing
+// read it, so the bubble took up residence over the mon's head forever and only changed
+// its text. It should be a remark, not a fixture.
+static const float THOUGHT_SHOW_SEC    = 12.0f;
 static const uint32_t AWAY_CAP_SEC     = 4UL * 3600;
 
-static const char *const NVS_NAMESPACE = "clawdpet";
-static const uint32_t SAVE_MAGIC = 0x50544544;   // 'DETP': the save gained the RTC
-                                                 // timestamp, and an older blob
-                                                 // would be read at the wrong size
+static const char *const NVS_NAMESPACE = "clawdpet2";
+static const uint32_t SAVE_MAGIC = 0x4D4F4E31;   // 'MON1'
 
-static uint32_t petSessionId = 0;
+static uint32_t monSessionId = 0;
 
 // ------------------------------------------------------------------ colours ----
 static const uint16_t COL_BG     = PX(RGB565(0x0E, 0x0E, 0x16));
 static const uint16_t COL_TEXT   = PX(RGB565(0xEC, 0xEC, 0xF4));
 static const uint16_t COL_DIM    = PX(RGB565(0x6E, 0x6E, 0x80));
 static const uint16_t COL_RULE   = PX(RGB565(0x2A, 0x2A, 0x3A));
-static const uint16_t COL_ACCENT = PX(RGB565(0xD9, 0x77, 0x57));   // clawd's rust
+static const uint16_t COL_ACCENT = PX(RGB565(0xD9, 0x77, 0x57));
 static const uint16_t COL_WARN   = PX(RGB565(0xE0, 0x50, 0x50));
-static const uint16_t COL_PANEL  = PX(RGB565(0x1A, 0x1A, 0x26));   // the speech box
+static const uint16_t COL_PANEL  = PX(RGB565(0x1A, 0x1A, 0x26));
+static const uint16_t COL_SHELL  = PX(RGB565(0xE6, 0xDF, 0xF0));
+static const uint16_t COL_SHELL_EDGE = PX(RGB565(0x8E, 0x88, 0xA8));
+static const uint16_t COL_CRACK      = PX(RGB565(0x4A, 0x44, 0x5C));
 
-// ------------------------------------------------------------------- the body ---
-// The pet is clawd himself, not a cartoon face drawn in his place.
-// tools/make_pet_sprites.py renders him at four sizes -- one per life stage, from
-// the same artwork the rolling game uses -- so growing up is something you can see,
-// and punches the eyes out of that artwork. Everything expressive is then drawn
-// into that gap, which is what lets four body sprites carry seven moods.
-//
-// This replaced a fully drawn face. The face existed because kaomoji -- the
-// original's (o.o) and friends -- are Unicode, and their 8x8 ASCII equivalents
-// render as [ ^ _ ^ ]: at that size a parenthesis is a straight stroke. Drawn eyes
-// on a real body get the expressiveness back without giving up the character.
+// ------------------------------------------------------------------- the face ---
+// One body per form carries every mood the same way the pet's do: the artwork's eyes
+// are punched out by the generator and redrawn here each frame.
 enum { EYE_ROUND, EYE_HAPPY, EYE_SHUT, EYE_CROSS, EYE_ANGRY };
-enum { EMOTE_NONE, EMOTE_HEART, EMOTE_ANGER, EMOTE_SICK, EMOTE_ZZZ };
+enum { EMOTE_NONE, EMOTE_HEART, EMOTE_ANGER, EMOTE_SICK, EMOTE_ZZZ, EMOTE_SPARK };
 
-// A mood is a face plus a movement: which eyes, whether a mouth shows, what floats
-// over its shoulder, and how far it bobs. `bob` is an amplitude in pixels.
 struct MoodDef { uint8_t eyes; uint8_t emote; bool mouth; uint8_t bob; };
 
 static const MoodDef MOODS[ANIM_COUNT] = {
@@ -91,7 +116,7 @@ static const MoodDef MOODS[ANIM_COUNT] = {
     /* HAPPY   */ { EYE_HAPPY, EMOTE_HEART, false, 4 },
     /* EAT     */ { EYE_SHUT,  EMOTE_NONE,  true,  3 },
     /* SLEEP   */ { EYE_SHUT,  EMOTE_ZZZ,   false, 0 },
-    /* BATH    */ { EYE_HAPPY, EMOTE_HEART, false, 3 },
+    /* BATH    */ { EYE_HAPPY, EMOTE_SPARK, false, 3 },
     /* SICK    */ { EYE_CROSS, EMOTE_SICK,  false, 0 },
     /* ANNOYED */ { EYE_ANGRY, EMOTE_ANGER, false, 4 },
 };
@@ -100,12 +125,20 @@ static const float FRAME_SEC       = 0.45f;
 static const float ACTION_HOLD_SEC = 2.6f;
 static const float BOB_HZ          = 0.9f;
 
+static inline float clampf(float v, float lo, float hi)
+{
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
+static const mon_form_t &formOf(uint8_t form)
+{
+    return mon_forms[form < MON_FORM_COUNT ? form : MON_FORM_COUNT - 1];
+}
+
 static void drawEye(int x, int y, int r, int style, uint16_t c, int dir = 1)
 {
     switch (style) {
     case EYE_HAPPY:
-        // An upward arc -- the ^ of a ^_^ smile, which is the one kaomoji glyph that
-        // does survive at this size.
         for (int i = -r; i <= r; i++) {
             gfx::fillRect(x + i, y - (r - abs(i)) / 2, 1, 3, c);
         }
@@ -118,9 +151,6 @@ static void drawEye(int x, int y, int r, int style, uint16_t c, int dir = 1)
         gfx::line((float)(x + r), (float)(y - r), (float)(x - r), (float)(y + r), c);
         break;
     case EYE_ANGRY:
-        // Inner end down, outer end up: the V of a scowl. `dir` mirrors it, because
-        // one call draws both eyes and only one of them leans each way. Curving it
-        // through the middle instead reads as sad, which is the wrong message.
         for (int i = -r; i <= r; i++) {
             const int t = (dir > 0) ? (i + r) : (r - i);
             gfx::fillRect(x + i, y - r / 2 + t / 2, 1, 2, c);
@@ -134,37 +164,11 @@ static void drawEye(int x, int y, int r, int style, uint16_t c, int dir = 1)
 
 static void drawMouth(int x, int y, int r, uint16_t c)
 {
-    // An open, chewing mouth: a half-disc under the eyes.
     for (int i = -r; i <= r; i++) {
         gfx::fillRect(x + i, y, 1, (r - abs(i)) * 3 / 4 + 1, c);
     }
 }
 
-// Writes one body sprite straight into the framebuffer. Going through fillRect for
-// each pixel would be simpler and too slow: the adult body is 18816 pixels, and
-// every frame repaints the whole screen anyway.
-static void blitBody(const pet_sprite_t &s, int cx, int cy)
-{
-    const uint16_t body = PX(pet_palette[1]);
-    const int x0 = cx - s.w / 2;
-    const int y0 = cy - s.h / 2;
-    for (int y = 0; y < s.h; y++) {
-        const int dy = y0 + y;
-        if ((unsigned)dy >= (unsigned)SCR_H) continue;
-        const uint8_t *row = s.bits + y * s.rowBytes;
-        uint16_t *out = fb + dy * SCR_W;
-        for (int x = 0; x < s.w; x++) {
-            if ((row[x >> 2] >> ((x & 3) * 2)) & 3) {
-                const int dx = x0 + x;
-                if ((unsigned)dx < (unsigned)SCR_W) out[dx] = body;
-            }
-        }
-    }
-}
-
-// The marks that appear over clawd's shoulder. Drawn rather than stored as sprites:
-// each is a handful of shapes, and at 20 px across a bitmap would cost about as many
-// bytes as the pet's whole body.
 static void drawHeart(float x, float y, float r, uint16_t c)
 {
     gfx::fillCircle(x - r * 0.5f, y - r * 0.3f, r * 0.55f, c);
@@ -177,12 +181,8 @@ static void drawHeart(float x, float y, float r, uint16_t c)
 
 static void drawAngerMark(float x, float y, float r, uint16_t c)
 {
-    // Four strokes out of a centre: the cross-popping vein, which needs no
-    // explanation to anyone who has watched a cartoon.
     for (int k = 0; k < 4; k++) {
         const float a = PI_F * 0.25f + (float)k * PI_F * 0.5f;
-        // Two parallel strokes per arm: at this size a single one-pixel line reads
-        // as a speck rather than as a vein.
         for (int t = 0; t < 2; t++) {
             const float o = (float)t * 0.22f + 0.11f;
             gfx::line(x + cosf(a) * r * 0.30f + sinf(a) * r * o,
@@ -199,12 +199,24 @@ static void drawSickMark(float x, float y, float r, uint16_t c)
     gfx::fillRect((int)(x - r), (int)(y - r * 0.28f), (int)(2 * r), (int)(r * 0.56f), c);
 }
 
+static void drawSpark(float x, float y, float r, uint16_t c)
+{
+    // A four-pointed sparkle: the bath is over and it is clean, which the heart alone
+    // would claim too often.
+    for (int k = 0; k < 4; k++) {
+        const float a = (float)k * PI_F * 0.5f;
+        gfx::line(x, y, x + cosf(a) * r, y + sinf(a) * r, c);
+    }
+    gfx::fillCircle(x, y, 2.0f, c);
+}
+
 static void drawEmote(uint8_t emote, float x, float y)
 {
     switch (emote) {
     case EMOTE_HEART: drawHeart(x, y, 9.0f, COL_WARN); break;
     case EMOTE_ANGER: drawAngerMark(x, y, 9.0f, COL_WARN); break;
     case EMOTE_SICK:  drawSickMark(x, y, 7.0f, COL_WARN); break;
+    case EMOTE_SPARK: drawSpark(x, y, 8.0f, COL_ACCENT); break;
     case EMOTE_ZZZ:
         gfx::text("z", (int)x - 6, (int)y - 12, COL_TEXT, 2);
         gfx::text("z", (int)x + 8, (int)y, COL_DIM, 1);
@@ -213,18 +225,41 @@ static void drawEmote(uint8_t emote, float x, float y)
     }
 }
 
-// ------------------------------------------------------------ what it says -----
-// Grouped by what is wrong, checked in order of severity. The original has hundreds of
-// these; a dozen or so is enough for the pet to feel like it has opinions.
-static const char *const T_SICK[]   = { "i don't feel well", "everything aches", "medic... please" };
-static const char *const T_HUNGRY[] = { "my stomach is rumbling", "got anything to eat?", "so hungry" };
-static const char *const T_TIRED[]  = { "so sleepy...", "i could nap", "eyes are heavy" };
-static const char *const T_DIRTY[]  = { "i need a bath", "feeling grubby", "i smell funny" };
-static const char *const T_SAD[]    = { "entertain me?", "it is boring here", "play with me?" };
-static const char *const T_GOOD[]   = { "life is good", "i like it here", "thanks for the care" };
-static const char *const T_IDLE[]   = { "just hanging out", "nice day", "watching the pixels", "hello!" };
+// Writes one body straight into the framebuffer. Going through gfx::pixel for each
+// pixel would be simpler and too slow: the adult body is 14652 pixels and every frame
+// repaints the whole screen.
+static void blitForm(const mon_form_t &f, int cx, int cy)
+{
+    const uint16_t body = PX(f.body);
+    const uint16_t edge = PX(f.edge);
+    const int x0 = cx - f.w / 2;
+    const int y0 = cy - f.h / 2;
+    for (int y = 0; y < f.h; y++) {
+        const int dy = y0 + y;
+        if ((unsigned)dy >= (unsigned)SCR_H) continue;
+        const uint8_t *row = f.bits + y * f.rowBytes;
+        uint16_t *out = fb + dy * SCR_W;
+        for (int x = 0; x < f.w; x++) {
+            const uint8_t v = (row[x >> 2] >> ((x & 3) * 2)) & 3;
+            if (!v) continue;
+            const int dx = x0 + x;
+            if ((unsigned)dx >= (unsigned)SCR_W) continue;
+            out[dx] = (v == 2) ? edge : body;
+        }
+    }
+}
 
-static const char *const NAMES[] = { "CLAWD", "PIP", "MOMO", "BOB", "ZIGGY", "NOVA" };
+// ------------------------------------------------------------ what it says -----
+static const char *const T_SICK[]   = { "i feel awful", "everything hurts", "medic..." };
+static const char *const T_HUNGRY[] = { "feed me?", "my stomach growls", "so hungry" };
+static const char *const T_TIRED[]  = { "so sleepy...", "i need rest", "eyes are heavy" };
+static const char *const T_DIRTY[]  = { "i need a bath", "feeling grubby", "something is stuck to me" };
+static const char *const T_SAD[]    = { "play with me?", "it is boring", "you ignoring me?" };
+static const char *const T_GOOD[]   = { "i feel great", "best day ever", "thanks for the care" };
+static const char *const T_IDLE[]   = { "just hanging out", "nice day", "watching the pixels", "hi!" };
+static const char *const T_EGG[]    = { "...", "(a faint knock from inside)", "the shell is warm" };
+
+static const char *const NAMES[] = { "PIP", "MOSS", "BUBBLE", "SPARK", "GRUB", "NOVA" };
 static const int NAME_COUNT = (int)(sizeof(NAMES) / sizeof(NAMES[0]));
 
 // ------------------------------------------------------------------ layout -----
@@ -233,50 +268,40 @@ static const int RULE1_Y = 38;
 static const int METER_COL_A = 54, METER_COL_B = 196;
 static const int METER_ROW0  = 50,  METER_ROW1 = 64;
 static const int HEALTH_Y    = 78;
+static const int DEX_Y       = SCR_H - 22;
 
-// clawd stays in the middle, and what he says goes over his head: a ringed bubble
-// centred on the screen's own axis. A rectangle beside him was the wrong shape for a
-// round panel and pushed him off centre to make room for it.
-//
-// The top block is compressed to pay for the bubble -- the header up to 28 and the
-// meter rows to 54 and 68, all a line's worth tighter than they were.
 static const int BUBBLE_CY   = 110;
-static const int BUBBLE_RX   = 95;    // widest the bubble gets
+static const int BUBBLE_RX   = 95;
 static const int BUBBLE_RXMIN = 34;
-static const int BUBBLE_TAIL = 5;     // how far the point hangs below the ring
-static const int BUBBLE_RYMIN = 15;   // so a one-line bubble is not a sliver
+static const int BUBBLE_TAIL = 5;
+static const int BUBBLE_RYMIN = 15;
 static const int SPEECH_PAD  = 8;
-// Deliberately narrow: a wider box fits more thoughts on one line and comes out as a
-// flat ellipse, which reads as a bar rather than as a bubble. Two lines make it round.
 static const int SPEECH_COLS = 16;
-static const int SPEECH_LINE = 11;    // 8 px glyphs plus leading
+static const int SPEECH_LINE = 11;
 static const int SPEECH_MAXLINES = 2;
 
 static const int PET_CX      = 180;
 static const int PET_CY      = 184;
+static const int EGG_RX      = 34;
+static const int EGG_RY      = 44;
 
-// The menu follows the bezel: six items on an arc across the bottom. Two rows of
-// three put the entries about 30 px apart with 8 px of glyph to hit, which is not a
-// target a finger can find. On an arc at this radius they are 51 px apart, each with
-// a 24 px grab radius of its own, and the arc stops short of the pet.
 static const float MENU_R    = 134.0f;
-static const float MENU_SPAN = 110.0f;    // degrees of arc, centred on straight down
+static const float MENU_SPAN = 110.0f;
 static const float MENU_HIT  = 24.0f;
 
-// The header rule's span. Not the full width: at y=38 the bezel leaves only about
-// x=69..291 visible, and a line drawn past that just ends under the rim.
 static const int RULE_X0 = 76, RULE_X1 = 284;
-static const int CHAR_W  = 7;                   // the font's advance at scale 1
-static const int BAR_CHARS = 8;       // '#' filled, '.' empty
+static const int CHAR_W  = 7;
+static const int BAR_CHARS = 6;
 
-static const char *const ACT_LABEL[ACT_COUNT] = { "FEED", "PLAY", "PET", "SLEEP", "SCRUB", "NAME" };
+static const char *const ACT_LABEL[ACT_COUNT] = { "FEED", "PLAY", "PET", "REST", "SCRUB", "STYLE" };
 
-// ------------------------------------------------------------------ helpers ----
-static inline float clampf(float v, float lo, float hi)
+// The sixth slot opens the wardrobe; its secondary action retains rename/new egg.
+static const char *actLabelFor(int i, uint8_t)
 {
-    return v < lo ? lo : (v > hi ? hi : v);
+    return ACT_LABEL[i];
 }
 
+// ------------------------------------------------------------------ helpers ----
 void GamePet::setFlag(uint8_t f, bool on)
 {
     if (on) S.flags |= f; else S.flags &= (uint8_t)~f;
@@ -304,90 +329,249 @@ void GamePet::setAnimation(int a, float holdSec)
     animHoldSec = holdSec;
 }
 
+void GamePet::react(const char *emotion)
+{
+    if (!emotion || has(MF_ASLEEP)) return;
+    int a = ANIM_IDLE;
+    if (!strcmp(emotion, "happy") || !strcmp(emotion, "laughing") ||
+        !strcmp(emotion, "loving") || !strcmp(emotion, "excited")) a = ANIM_HAPPY;
+    else if (!strcmp(emotion, "angry") || !strcmp(emotion, "annoyed")) a = ANIM_ANNOYED;
+    else if (!strcmp(emotion, "sad") || !strcmp(emotion, "crying")) a = ANIM_SICK;
+    else if (!strcmp(emotion, "sleepy")) a = ANIM_SLEEP;
+    setAnimation(a, ACTION_HOLD_SEC);
+}
+
+void GamePet::describe(char *out, size_t size) const
+{
+    snprintf(out, size, "You are CLAWD PET, the creature on this badge. Name: %.11s. "
+        "Stage: %s. Hunger/fullness %.0f, happiness %.0f, energy %.0f, cleanliness %.0f "
+        "(all 0-100, higher is better). Asleep: %s. Sick: %s. Speak briefly as this pet.",
+        S.name, S.stage == STAGE_EGG ? "egg" : formOf(S.form).name,
+        S.hunger, S.happiness, S.energy, S.cleanliness,
+        has(MF_ASLEEP) ? "yes" : "no", has(MF_SICK) ? "yes" : "no");
+}
+
+void GamePet::discover(int form)
+{
+    S.seen |= (uint8_t)(1u << form);
+}
+
 // -------------------------------------------------------------------- NVS -----
 void GamePet::load()
 {
     Preferences prefs;
     if (prefs.begin(NVS_NAMESPACE, true)) {
-        // The magic travels inside the same blob as the state: writing it as a separate
-        // putBytes first does not work, because the following write replaces the value
-        // rather than appending, and the tag is gone by the time it is read back.
-        PetSave blob;
+        MonSave blob;
         const size_t got = prefs.isKey("blob") ? prefs.getBytes("blob", &blob, sizeof(blob)) : 0;
         if (got == sizeof(blob) && blob.magic == SAVE_MAGIC) {
             S = blob.state;
             prefs.end();
-            const bool sane = S.stage <= 3 && S.name[0] != 0 &&
-                              S.hunger <= 100.5f && S.happiness <= 100.5f &&
-                              S.energy <= 100.5f && S.cleanliness <= 100.5f &&
-                              S.health <= 100.5f;
-            if (sane) {
-                Serial.printf("[pet] restored: %s stage=%u age=%.1f min health=%.0f\n",
-                              S.name, S.stage, S.ageSec / 60.0f, S.health);
+            if (sane()) {
+                Serial.printf("[mon] restored: %s stage=%u form=%u seen=%u/7\n",
+                              S.name, (unsigned)S.stage, (unsigned)S.form,
+                              (unsigned)__builtin_popcount(S.seen));
                 return;
             }
-            Serial.println("[pet] save looked corrupt; starting a new pet");
+            Serial.println("[mon] save looked corrupt; starting a new egg");
         } else {
             prefs.end();
         }
     }
-    resetToNewPet();
-    Serial.println("[pet] no save found; a new pet was born");
+    if (restoreLegacy()) { save(); return; }
+    S = {};
+    resetToEgg();
+    Serial.println("[mon] no save found; an egg appeared");
+}
+
+bool GamePet::sane() const
+{
+    const float values[] = { S.hunger, S.happiness, S.energy, S.cleanliness,
+        S.health, S.hatch, S.carePoints, S.joy, S.vigor, S.careSum };
+    for (float v : values) if (!isfinite(v) || v < 0.0f) return false;
+    return S.stage <= STAGE_ADULT && S.form < MON_FORM_COUNT &&
+        S.name[0] && memchr(S.name, 0, sizeof(S.name)) &&
+        S.hunger <= 100.5f && S.happiness <= 100.5f && S.energy <= 100.5f &&
+        S.cleanliness <= 100.5f && S.health <= 100.5f && S.hatch <= 100.5f;
+}
+
+bool GamePet::restoreLegacy()
+{
+    Preferences prefs;
+    // PIXEL MON has the complete evolution state; prefer it when both exist.
+    if (prefs.begin("pixmon", true)) {
+        MonSave blob{};
+        const size_t got = prefs.getBytes("blob", &blob, sizeof(blob));
+        prefs.end();
+        if (got == sizeof(blob) && blob.magic == SAVE_MAGIC) {
+            S = blob.state;
+            if (sane()) { Serial.println("[pet] migrated PIXEL MON save"); return true; }
+        }
+    }
+    // Exact layout of the original CLAWD PET save. Old namespaces stay intact.
+    struct OldState {
+        uint32_t ageSec, lastSeenEpoch, lastSeenMs, sessionId;
+        float hunger, happiness, energy, cleanliness, health, carePoints;
+        uint8_t stage, flags;
+        uint16_t feedCount, attentions;
+        char name[12];
+    };
+    struct OldSave { uint32_t magic; OldState state; } blob{};
+    if (!prefs.begin("clawdpet", true)) return false;
+    const size_t got = prefs.getBytes("blob", &blob, sizeof(blob));
+    prefs.end();
+    if (got != sizeof(blob) || blob.magic != 0x50544544 || blob.state.stage > 3) return false;
+    const auto &old = blob.state;
+    S = {};
+    S.ageSec = old.ageSec; S.lastSeenEpoch = old.lastSeenEpoch;
+    S.lastSeenMs = old.lastSeenMs; S.sessionId = old.sessionId;
+    S.hunger = old.hunger; S.happiness = old.happiness; S.energy = old.energy;
+    S.cleanliness = old.cleanliness; S.health = old.health; S.carePoints = old.carePoints;
+    S.stage = old.stage == 0 ? STAGE_BABY : (old.stage < 3 ? STAGE_CHILD : STAGE_ADULT);
+    S.form = S.stage == STAGE_BABY ? FORM_PIP : (S.stage == STAGE_CHILD ? FORM_LEAF : FORM_BLOOM);
+    S.flags = old.flags; S.feedCount = old.feedCount; S.attentions = old.attentions;
+    memcpy(S.name, old.name, sizeof(S.name));
+    S.hatch = 100; S.seen = (1u << FORM_PIP) | (1u << S.form);
+    S.joy = S.vigor = 1; S.careSum = averageCare(); S.careSamples = 1;
+    if (!sane()) return false;
+    Serial.println("[pet] migrated original CLAWD PET save");
+    return true;
 }
 
 void GamePet::save()
 {
     Preferences prefs;
     if (!prefs.begin(NVS_NAMESPACE, false)) return;
-    PetSave blob;
+    MonSave blob;
     blob.magic = SAVE_MAGIC;
     blob.state = S;
     prefs.putBytes("blob", &blob, sizeof(blob));
     prefs.end();
 }
 
-void GamePet::resetToNewPet()
+void GamePet::loadOutfit()
 {
+    outfit = 0;
+    Preferences prefs;
+    if (prefs.begin(NVS_NAMESPACE, true)) {
+        uint8_t saved = 0;
+        if (prefs.getBytes("outfit", &saved, sizeof(saved)) == sizeof(saved) && saved <= outfits::count())
+            outfit = saved;
+        prefs.end();
+    }
+    previewOutfit = outfit;
+}
+
+void GamePet::wearOutfit()
+{
+    if (previewOutfit > outfits::count()) return;
+    Preferences prefs;
+    if (!prefs.begin(NVS_NAMESPACE, false)) { say("could not save outfit"); return; }
+    const bool stored = prefs.putBytes("outfit", &previewOutfit, sizeof(previewOutfit)) == sizeof(previewOutfit);
+    prefs.end();
+    if (!stored) { say("could not save outfit"); return; }
+    outfit = previewOutfit;
+    mode = MODE_MON;
+    outfitMs = 0;
+    Serial.printf("[pet] outfit=%u\n", (unsigned)outfit);
+}
+
+void GamePet::openWardrobe()
+{
+    previewOutfit = outfit;
+    outfitMs = 0;
+    wardrobeDown = dragging = false;
+    mode = MODE_WARDROBE;
+}
+
+void GamePet::stepOutfit(int direction)
+{
+    const int total = outfits::count() + 1;
+    previewOutfit = (uint8_t)((previewOutfit + direction + total) % total);
+    outfitMs = 0;
+}
+
+void GamePet::updateWardrobe()
+{
+    if (input::touchDown() && !wardrobeDown) {
+        wardrobeDown = true;
+        wardrobeStartX = input::tapX();
+        wardrobeStartY = input::tapY();
+    }
+    if (!input::tapped()) {
+        if (!input::touchDown()) wardrobeDown = false;
+        return;
+    }
+    const int x = input::tapX(), y = input::tapY();
+    const int dx = x - wardrobeStartX, dy = y - wardrobeStartY;
+    const bool swipe = wardrobeDown && abs(dx) > 35 && abs(dx) > abs(dy) &&
+        wardrobeStartY >= 115 && wardrobeStartY <= 245;
+    wardrobeDown = false;
+    if (swipe) { stepOutfit(dx < 0 ? 1 : -1); return; }
+    if (y >= 175 && y <= 232) {
+        if (x < 75) stepOutfit(-1);
+        else if (x > 285) stepOutfit(1);
+    } else if (y >= 261 && y <= 305) {
+        if (x >= 55 && x <= 160) { mode = MODE_MON; outfitMs = 0; }
+        else if (x >= 200 && x <= 305) wearOutfit();
+    } else if (y >= 312 && y <= 340 && x >= 125 && x <= 235) {
+        act(ACT_NAME);
+        save();
+    }
+}
+
+void GamePet::renderWardrobe()
+{
+    gfx::textCentered("WARDROBE", 32, COL_ACCENT, 2);
+    char page[24];
+    snprintf(page, sizeof(page), "%02u / %02u", (unsigned)previewOutfit + 1, outfits::count() + 1);
+    gfx::textCentered(page, 60, COL_DIM, 1);
+    const char *title = previewOutfit ? outfits::name(previewOutfit - 1) : "ORIGINAL";
+    gfx::textCentered(title, 86, COL_TEXT, gfx::textWidth(title, 2) <= 270 ? 2 : 1);
+
+    {
+        const float savedX = monX, savedY = monY;
+        const uint8_t savedOutfit = outfit;
+        monX = 180; monY = 204; outfit = previewOutfit;
+        if (S.stage == STAGE_EGG) drawEgg(); else drawMon();
+        monX = savedX; monY = savedY; outfit = savedOutfit;
+    }
+    for (int side = 0; side < 2; ++side) {
+        const float x = side ? 323 : 37;
+        const float d = side ? -1 : 1;
+        gfx::strokeCircle(x, 202, 20, 1, COL_RULE);
+        gfx::line(x + d * 4, 194, x - d * 4, 202, COL_ACCENT);
+        gfx::line(x - d * 4, 202, x + d * 4, 210, COL_ACCENT);
+    }
+    auto button = [](int x, const char *label, bool primary) {
+        const uint16_t color = primary ? COL_ACCENT : COL_PANEL;
+        gfx::fillCircle((float)x - 30, 283, 19, color);
+        gfx::fillCircle((float)x + 30, 283, 19, color);
+        gfx::fillRect(x - 30, 264, 60, 38, color);
+        gfx::text(label, x - gfx::textWidth(label, 1) / 2, 279, primary ? COL_BG : COL_TEXT, 1);
+    };
+    button(108, "BACK", false); button(252, "WEAR", true);
+    gfx::textCentered(S.stage == STAGE_ADULT ? "NEW EGG" : "RENAME", 324, COL_DIM, 1);
+}
+
+void GamePet::resetToEgg()
+{
+    // The dex is the one thing a new lifetime must not throw away: it is the reason to
+    // raise a second one.
+    const uint8_t dex = S.seen;
     memset(&S, 0, sizeof(S));
-    S.sessionId   = petSessionId;
+    S.seen        = dex;
+    S.sessionId   = monSessionId;
     S.lastSeenMs  = millis();
     S.hunger      = 70.0f;
     S.happiness   = 70.0f;
     S.energy      = 80.0f;
     S.cleanliness = 90.0f;
     S.health      = 80.0f;
-    S.stage       = 0;
+    S.stage       = STAGE_EGG;
+    S.form        = FORM_PIP;
     strncpy(S.name, NAMES[random(0, NAME_COUNT)], sizeof(S.name) - 1);
-    say("%s was born", S.name);
+    say("an egg appeared");
     save();
-}
-
-bool GamePet::selfTest()
-{
-    // Load first: running this before anything has been read means "the state to put
-    // back afterwards" is an empty struct, and it would overwrite the real save.
-    load();
-    const State before = S;
-
-    State probe = S;
-    probe.stage = 2;
-    probe.ageSec = 1234;
-    probe.hunger = 55.5f;
-    strncpy(probe.name, "PROBE", sizeof(probe.name) - 1);
-
-    S = probe;
-    save();
-    memset(&S, 0, sizeof(S));      // force load() to read flash rather than stale RAM
-    load();
-
-    const bool ok = (S.stage == 2) && (S.ageSec == 1234) &&
-                    (fabsf(S.hunger - 55.5f) < 0.01f) && (strcmp(S.name, "PROBE") == 0);
-    Serial.printf("[pet] nvs round-trip: %s (stage=%u age=%u name=%s)\n",
-                  ok ? "PASS" : "FAIL", (unsigned)S.stage, (unsigned)S.ageSec, S.name);
-
-    S = before;
-    save();
-    return ok;
 }
 
 // -------------------------------------------------------------- simulation -----
@@ -396,56 +580,155 @@ void GamePet::decay(uint32_t sec)
     const float mins = sec / 60.0f;
     if (mins <= 0.0f) return;
 
-    if (has(PF_ASLEEP)) {
-        // Sleeping restores energy and slows appetite; nothing else moves.
+    if (has(MF_ASLEEP)) {
         S.energy = clampf(S.energy + SLEEP_ENERGY_PER_MIN * mins, 0.0f, 100.0f);
         S.hunger = clampf(S.hunger - RATE_HUNGER * mins * SLEEP_HUNGER_SCALE, 0.0f, 100.0f);
-        return;
+        // Resting is one of the two ways into the vigor branch, so a mon that is put to
+        // bed often grows into something different from one that is played with often.
+        S.vigor += VIGOR_REST_MIN * mins;
+        // It wakes itself up when it has had enough. Without this, sleeping is a state
+        // the player has to remember to leave, and the screen spends the whole time
+        // blocking the other five actions.
+        if (S.energy >= 100.0f) {
+            setFlag(MF_ASLEEP, false);
+            say("i had a good nap");
+            setAnimation(ANIM_HAPPY, ACTION_HOLD_SEC);
+        }
+    } else {
+        S.hunger      = clampf(S.hunger      - RATE_HUNGER      * mins, 0.0f, 100.0f);
+        S.happiness   = clampf(S.happiness   - RATE_HAPPINESS   * mins, 0.0f, 100.0f);
+        S.energy      = clampf(S.energy      - RATE_ENERGY      * mins, 0.0f, 100.0f);
+        S.cleanliness = clampf(S.cleanliness - RATE_CLEANLINESS * mins, 0.0f, 100.0f);
+        accrueTracks(mins);
     }
 
-    S.hunger      = clampf(S.hunger      - RATE_HUNGER      * mins, 0.0f, 100.0f);
-    S.happiness   = clampf(S.happiness   - RATE_HAPPINESS   * mins, 0.0f, 100.0f);
-    S.energy      = clampf(S.energy      - RATE_ENERGY      * mins, 0.0f, 100.0f);
-    S.cleanliness = clampf(S.cleanliness - RATE_CLEANLINESS * mins, 0.0f, 100.0f);
-
-    // Health follows the average of the four rather than being fed to the pet.
     const float drag = fminf(1.0f, HEALTH_DRAG_PER_MIN * mins);
     S.health = clampf(S.health + (averageCare() - S.health) * drag, 0.0f, 100.0f);
 
-    const bool wasSick = has(PF_SICK);
+    const bool wasSick = has(MF_SICK);
     if (!wasSick && (S.health < SICK_AT_HEALTH || S.cleanliness < SICK_AT_CLEANLINESS)) {
-        setFlag(PF_SICK, true);
+        setFlag(MF_SICK, true);
         say("i feel sick...");
     } else if (wasSick && S.health > WELL_AT_HEALTH && S.cleanliness > WELL_AT_CLEANLINESS) {
-        setFlag(PF_SICK, false);
+        setFlag(MF_SICK, false);
         say("i feel better now");
     }
 
     if (averageCare() > CARE_GOOD_AVG) {
         S.carePoints += CARE_PER_MIN * mins;
     }
+
+    S.careSum += averageCare();
+    S.careSamples++;
+}
+
+void GamePet::accrueTracks(float mins)
+{
+    // The tracks follow the *state* of the needs, so the branch is the sum of hundreds of
+    // small decisions rather than of one button pressed at the right moment.
+    const float shared = 1.0f - TRACK_BASE;
+    S.joy   += mins * (TRACK_BASE + shared * S.happiness / 100.0f);
+    S.vigor += mins * (TRACK_BASE +
+                       shared * (S.energy + S.cleanliness) * 0.5f / 100.0f);
+}
+
+void GamePet::hatchEgg()
+{
+    S.stage = STAGE_BABY;
+    S.form  = FORM_PIP;
+    S.hatch = 100.0f;
+    S.careSum = 0.0f;         // the neglect check starts at the creature, not the egg
+    S.careSamples = 0;
+    discover(S.form);
+    say("%s hatched!", S.name);
+    setAnimation(ANIM_HAPPY, ACTION_HOLD_SEC * 2.0f);
+    sound::play2(660, 90, 990, 150);
+    Serial.printf("[mon] hatched as %s\n", formOf(S.form).name);
+    save();
+}
+
+void GamePet::evolve()
+{
+    const float total = S.joy + S.vigor;
+    const float spread = fabsf(S.joy - S.vigor);
+    const float careAvg = S.careSamples ? S.careSum / (float)S.careSamples : 100.0f;
+    const bool balanced = (total > 0.0f) && (spread < BALANCE_FRAC * total + 0.5f);
+    const char *why = "";
+
+    uint8_t next;
+    if (S.stage == STAGE_CHILD) {
+        if (careAvg < NEGLECT_CARE_AVG) {
+            next = FORM_DUSK;
+            why = "neglect";
+        } else if (balanced) {
+            next = FORM_SOLAR;
+            why = "both";
+        } else if (S.form == FORM_AQUA) {
+            next = FORM_TIDE;
+            why = "vigor";
+        } else {
+            next = FORM_BLOOM;
+            why = "joy";
+        }
+        S.stage = STAGE_ADULT;
+    } else {
+        if (S.joy >= S.vigor) {
+            next = FORM_LEAF;
+            why = "joy";
+        } else {
+            next = FORM_AQUA;
+            why = "vigor";
+        }
+        S.stage = STAGE_CHILD;
+    }
+
+    S.form = next;
+    S.careSum = 0.0f;             // the neglect check is about how this stage went
+    S.careSamples = 0;
+    discover(next);
+    // The reason travels with the announcement: a tree with four endings is only
+    // interesting if you can tell which branch you took and why.
+    say("%s is now %s (%s)", S.name, formOf(next).name, why);
+    setAnimation(ANIM_HAPPY, ACTION_HOLD_SEC * 2.0f);
+    sound::play2(520, 80, 780, 140);
+    Serial.printf("[mon] evolved to %s (%s): joy=%.1f vigor=%.1f careAvg=%.1f\n",
+                  formOf(next).name, why, S.joy, S.vigor, careAvg);
+    save();
 }
 
 void GamePet::tick(uint32_t sec)
 {
-    S.ageSec += sec;
     decay(sec);
 
-    if (S.stage < 3) {
-        const StageGate &g = GATES[S.stage];
-        if (S.ageSec >= g.ageSec && S.carePoints >= g.care) {
-            S.stage++;
-            say("i grew into a %s", STAGE_NAMES[S.stage]);
-            setAnimation(ANIM_HAPPY, ACTION_HOLD_SEC * 1.5f);
-            save();
+    if (S.stage == STAGE_EGG) {
+        if (S.energy >= HATCH_WARM_ENERGY && S.cleanliness >= HATCH_WARM_CLEAN) {
+            S.hatch += HATCH_PER_MIN * (sec / 60.0f);
+            if (S.hatch >= 100.0f) {
+                S.hatch = 100.0f;
+                hatchEgg();
+                return;
+            }
         }
+        return;   // an egg does not age; it is not alive yet
+    }
+
+    S.ageSec += sec;
+
+    if (S.stage == STAGE_BABY && S.ageSec >= GATE_CHILD.ageSec && S.carePoints >= GATE_CHILD.care) {
+        evolve();
+    } else if (S.stage == STAGE_CHILD && S.ageSec >= GATE_ADULT.ageSec &&
+               S.carePoints >= GATE_ADULT.care) {
+        evolve();
     }
 }
 
-void GamePet::rollThoughts(uint32_t sec)
+void GamePet::rollThoughts()
 {
-    (void)sec;
-    if (has(PF_SICK))            say("%s", T_SICK[random(0, 3)]);
+    if (S.stage == STAGE_EGG) {
+        say("%s", T_EGG[random(0, 3)]);
+        return;
+    }
+    if (has(MF_SICK))            say("%s", T_SICK[random(0, 3)]);
     else if (S.hunger < 30)      say("%s", T_HUNGRY[random(0, 3)]);
     else if (S.energy < 30)      say("%s", T_TIRED[random(0, 3)]);
     else if (S.cleanliness < 30) say("%s", T_DIRTY[random(0, 3)]);
@@ -456,16 +739,36 @@ void GamePet::rollThoughts(uint32_t sec)
 
 void GamePet::act(int a)
 {
-    if (has(PF_ASLEEP) && a != ACT_SLEEP && a != ACT_NAME) {
+    Serial.printf("[pet] action=%d stage=%u asleep=%d\n", a, S.stage, has(MF_ASLEEP));
+    if (has(MF_ASLEEP) && a != ACT_REST && a != ACT_NAME) {
         say("zzz...");
         setAnimation(ANIM_SLEEP, 0.0f);
         return;
+    }
+
+    // An egg has no needs it can act on beyond being kept warm, so the only gestures it
+    // answers are warming it in the hands and giving it a name.
+    if (S.stage == STAGE_EGG) {
+        if (a == ACT_PET) {
+            S.hatch = clampf(S.hatch + HATCH_PER_POKE, 0.0f, 100.0f);
+            jitter = 0.5f;
+            say("something knocked back");
+            if (S.hatch >= 100.0f) hatchEgg();
+            save();
+            return;
+        }
+        if (a != ACT_NAME) {
+            say("it is still an egg");
+            sound::nope();
+            return;
+        }
     }
 
     switch (a) {
     case ACT_FEED:
         S.hunger    = clampf(S.hunger + 30.0f, 0, 100);
         S.happiness = clampf(S.happiness + 10.0f, 0, 100);
+        S.joy += 0.5f; S.vigor += 0.5f;
         S.feedCount++;
         say("mmm, thanks!");
         setAnimation(ANIM_EAT, ACTION_HOLD_SEC);
@@ -473,21 +776,21 @@ void GamePet::act(int a)
     case ACT_PLAY:
         S.happiness = clampf(S.happiness + 20.0f, 0, 100);
         S.energy    = clampf(S.energy    - 15.0f, 0, 100);
+        S.joy += JOY_PLAY;
         S.attentions++;
         say("that was fun!");
         setAnimation(ANIM_HAPPY, ACTION_HOLD_SEC);
         break;
     case ACT_PET:
-        // A small, free gesture of affection: cheap on purpose, so noticing the pet is
-        // always worth doing.
         S.happiness = clampf(S.happiness + 8.0f, 0, 100);
+        S.joy += JOY_PET;
         S.attentions++;
         say("hehe");
         setAnimation(ANIM_HAPPY, ACTION_HOLD_SEC);
         break;
-    case ACT_SLEEP:
-        setFlag(PF_ASLEEP, !has(PF_ASLEEP));
-        if (has(PF_ASLEEP)) {
+    case ACT_REST:
+        setFlag(MF_ASLEEP, !has(MF_ASLEEP));
+        if (has(MF_ASLEEP)) {
             say("goodnight...");
             setAnimation(ANIM_SLEEP, 0.0f);
         } else {
@@ -495,12 +798,18 @@ void GamePet::act(int a)
             setAnimation(ANIM_IDLE, 0.0f);
         }
         break;
-    case ACT_BATHE:
-        // Cleaning is the shake game rather than a bar that moves by itself.
+    case ACT_SCRUB:
         startShakeGame();
-        return;   // startShakeGame saves its own outcome
+        return;   // startShakeGame's caller saves through finishShakeGame
     case ACT_NAME: {
-        // No keyboard on a badge, so the pet is renamed by cycling a short list.
+        if (S.stage == STAGE_ADULT) {
+            // The last slot changes meaning once the tree is finished with.
+            resetToEgg();
+            say("a new egg!");
+            sound::play2(780, 80, 520, 140);
+            Serial.println("[mon] started a new egg; the dex was kept");
+            return;
+        }
         int cur = 0;
         for (int i = 0; i < NAME_COUNT; i++) {
             if (strcmp(S.name, NAMES[i]) == 0) { cur = i; break; }
@@ -517,15 +826,15 @@ void GamePet::act(int a)
 // ------------------------------------------------------------------ drawing ----
 void GamePet::drawIcon(float cx, float cy, float size) const
 {
-    // Headphones: the animation where clawd settles in and listens, which is what a
-    // cared-for pet looks like. Distinct in silhouette and in colour from the other
-    // two entries' props (see tools/make_icon_sprites.py).
-    gfx::drawSpriteSized(icon_pet, cx, cy, 0.0f, size, icon_pet_palette);
+    // The adult form rather than the egg: the icon has to say "creature", and an egg
+    // looks like every other round thing on the ring.
+    const mon_form_t &f = formOf(FORM_TIDE);
+    gfx::Sprite s;
+    s.bits = f.bits; s.w = f.w; s.h = f.h; s.rowBytes = f.rowBytes;
+    const uint16_t pal[4] = { 0, PX(f.body), PX(f.edge), PX(f.ink) };
+    gfx::drawSpriteSized(s, cx, cy + size * 0.06f, 0.0f, size, pal);
 }
 
-// Splits the thought to fit the speech box. The font is fixed-width, so counting
-// characters is exact. Breaks at a space where there is one and mid-word where a
-// single word is longer than the line.
 static int wrapThought(const char *s, char out[][24], int maxLines, int cols)
 {
     if (cols < 4) cols = 4;
@@ -550,9 +859,6 @@ static int wrapThought(const char *s, char out[][24], int maxLines, int cols)
     return n;
 }
 
-// A filled ellipse with its top and bottom edges drawn as a ring. gfx has no ellipse
-// because nothing else has wanted one: the rest of the screen is rectangles, circles
-// and the menu's arc.
 static void ellipsePanel(int cx, int cy, int rx, int ry, int tail, uint16_t fill,
                          uint16_t edge)
 {
@@ -562,7 +868,6 @@ static void ellipsePanel(int cx, int cy, int rx, int ry, int tail, uint16_t fill
         if (h <= 0) continue;
         gfx::fillRect(cx + x, cy - h, 1, h * 2, fill);
         gfx::pixel(cx + x, cy - h, edge);
-        // Leave a gap in the bottom edge where the point hangs off it.
         if (abs(x) > tail) gfx::pixel(cx + x, cy + h - 1, edge);
     }
     if (tail <= 0) return;
@@ -577,6 +882,11 @@ static void ellipsePanel(int cx, int cy, int rx, int ry, int tail, uint16_t fill
 void GamePet::drawThought()
 {
     if (!thought[0]) return;
+    if (thoughtAgeSec > THOUGHT_SHOW_SEC) return;
+    // Tall hats and flowers need the space above the head. Keep their feedback
+    // between the body and the care buttons rather than covering the accessory.
+    const int bubbleCY = outfit ? 254 : BUBBLE_CY;
+    if (outfit && (dragging || fabsf(monY - PET_CY) > 6.0f)) return;
 
     char lines[SPEECH_MAXLINES][24];
     const int n = wrapThought(thought, lines, SPEECH_MAXLINES, SPEECH_COLS);
@@ -587,18 +897,15 @@ void GamePet::drawThought()
         const int w = (int)strlen(lines[i]) * CHAR_W;
         if (w > widest) widest = w;
     }
-    // Semi-axes measured to the text rather than guessed, so a short thought gets a
-    // small bubble and a long one gets a wide one.
     int rx = widest / 2 + SPEECH_PAD + 4;
     if (rx < BUBBLE_RXMIN) rx = BUBBLE_RXMIN;
     if (rx > BUBBLE_RX) rx = BUBBLE_RX;
     int ry = (n * SPEECH_LINE) / 2 + SPEECH_PAD;
     if (ry < BUBBLE_RYMIN) ry = BUBBLE_RYMIN;
-    const int tail = 7;
 
-    ellipsePanel(PET_CX, BUBBLE_CY, rx, ry, tail, COL_PANEL, gfx::dim(COL_ACCENT, 0.55f));
+    ellipsePanel(PET_CX, bubbleCY, rx, ry, outfit ? 0 : 7, COL_PANEL, gfx::dim(COL_ACCENT, 0.55f));
 
-    const int y0 = BUBBLE_CY - (n * SPEECH_LINE) / 2;
+    const int y0 = bubbleCY - (n * SPEECH_LINE) / 2;
     for (int i = 0; i < n; i++) {
         const int w = (int)strlen(lines[i]) * CHAR_W;
         gfx::text(lines[i], PET_CX - w / 2, y0 + i * SPEECH_LINE, COL_TEXT, 1);
@@ -613,76 +920,197 @@ void GamePet::drawMeter(const char *label, float value, int x, int y)
     for (int i = 0; i < BAR_CHARS; i++) line[k++] = (i < filled) ? '#' : '.';
     line[k++] = ']';
     line[k] = 0;
-
-    // Labels stay dim and only the value carries colour, so a full bar and an empty
-    // one are told apart at a glance.
     gfx::text(line, x, y, (value < 30.0f) ? COL_WARN : COL_ACCENT, 1);
 }
 
-void GamePet::drawPet()
+// A lens-shaped leaf: a run of vertical spans whose half-height follows a sine, so both
+// ends come to a point. Round blobs on a stick read as eggs, which is what the first
+// version of the LEAF mark was.
+static void drawLeaf(int x, int y, float angle, float len, float thick, uint16_t c)
 {
-    const MoodDef &m = MOODS[anim];
-    const pet_sprite_t &s = pet_sprites[S.stage < PET_STAGE_COUNT ? S.stage : PET_STAGE_COUNT - 1];
-
-    // A quick wobble while the pet is cross, so being poked too often has a physical
-    // tell and not only a change of face.
-    const int jx = (jitter > 0.0f) ? (int)(sinf(jitter * 45.0f) * 5.0f) : 0;
-    const int bob = (m.bob > 0) ? (int)lroundf(sinf(bobPhase * 2.0f * PI_F * BOB_HZ) * m.bob) : 0;
-
-    const int cx = (int)petX + jx;
-    const int cy = (int)petY + bob;
-
-    blitBody(s, cx, cy);
-
-    // The eyes are the pet's own, drawn into the gap the artwork left for them, so
-    // one body covers every mood. They lean towards the last touch, which is cheap
-    // and reads as paying attention.
-    const int lx = (int)lroundf(lookX);
-    const int ly = (int)lroundf(lookY);
-    const int ey = cy + s.eyeDY + ly;
-    uint8_t eyes = m.eyes;
-    // An occasional blink, counted off the animation's own frame clock rather than a
-    // separate timer. Blinking overrides the mood for a single frame.
-    if (anim == ANIM_IDLE && (animFrame % 4) == 3) eyes = EYE_SHUT;
-
-    const uint16_t ink = PX(pet_palette[2]);
-    // eyeDX is the distance from the sprite's centre to one eye, not a coordinate,
-    // and the glance is added after that placement rather than folded into it. Adding
-    // it to the distance instead moved the left eye by -lx and the right by +lx: the
-    // two eyes slid apart as the finger moved, which reads as a squint rather than as
-    // looking at it.
-    drawEye(cx - s.eyeDX + lx, ey, s.eyeR, eyes, ink, +1);
-    drawEye(cx + s.eyeDX + lx, ey, s.eyeR, eyes, ink, -1);
-    if (m.mouth) drawMouth(cx + lx / 2, ey + s.eyeR * 2, s.eyeR, ink);
-
-    // The mood mark sits at the pet's shoulder, clear of the meters above.
-    if (m.emote != EMOTE_NONE) {
-        drawEmote(m.emote, (float)(cx + s.w / 2 - 10), (float)(cy - s.h / 2 + 6));
+    const float ca = cosf(angle), sa = sinf(angle);
+    // Two samples per pixel along the axis: at these angles the spine advances half a
+    // pixel at a time, and one sample per pixel leaves the leaf hollow.
+    const int steps = (int)(len * 2.0f);
+    for (int i = 0; i <= steps; i++) {
+        const float t = (float)i / (float)steps;
+        const float h = sinf(PI_F * t) * thick * 0.5f;
+        const float px = x + ca * len * t;
+        const float py = y + sa * len * t;
+        for (int k = -(int)h; k <= (int)h; k++) {
+            gfx::pixel((int)(px - sa * k), (int)(py + ca * k), c);
+        }
     }
 }
 
-// The pet's touch target: an ellipse over the body, plus slack, because a finger is
-// not a pointer. Deliberately generous -- this is the thing the user is meant to
-// grab -- but not a circle, which at the adult width would swallow the menu below.
-bool GamePet::petHit(int x, int y) const
+// The thing that tells the forms apart once they share a silhouette: a mark on the head.
+// Drawn rather than stored in the bitmap, because at this size a mark is three shapes and
+// a bitmap is another 1.5 KB per form.
+void GamePet::drawMark(int form, int cx, int cy, int scale)
 {
-    const pet_sprite_t &s = pet_sprites[S.stage < PET_STAGE_COUNT ? S.stage : PET_STAGE_COUNT - 1];
-    const float rx = s.w * 0.5f + 8.0f;
-    const float ry = s.h * 0.5f + 8.0f;
-    const float dx = (float)x - petX;
-    const float dy = (float)y - petY;
+    const mon_form_t &f = formOf(form);
+    const uint16_t body = PX(f.body);
+    const uint16_t edge = PX(f.edge);
+    const float r = 6.0f * scale;
+
+    switch (form) {
+    case FORM_PIP:
+        break;
+    case FORM_LEAF: {
+        // One leaf on a stem, tilted. Round blobs on a stick read as eggs, and two
+        // pointed leaves at this size merged into a single blob, so it is one leaf with
+        // the stem left visible under it.
+        const int stemTop = cy - (int)(r * 0.85f);
+        for (int y = cy; y >= stemTop; y--) {
+            gfx::pixel(cx - 1 + ((cy - y) < 4 ? 0 : 1), y, edge);
+        }
+        drawLeaf(cx - 1, stemTop, -1.15f, r * 1.9f, r * 0.85f, body);
+        break;
+    }
+    case FORM_AQUA:
+        // A single drop, point up.
+        gfx::fillCircle(cx, cy - r * 0.6f, r * 0.8f, body);
+        for (int i = 0; i < (int)r; i++) {
+            gfx::fillRect(cx - i * 8 / (int)r, cy - r * 1.5f + i, i * 16 / (int)r + 1, 1, body);
+        }
+        break;
+    case FORM_BLOOM: {
+        // Five petals round a centre: the leaf line flowering is the payoff for joy.
+        const uint16_t petal = PX(RGB565(0xF0, 0x8A, 0xB0));
+        const uint16_t core  = PX(RGB565(0xFF, 0xE0, 0x8A));
+        for (int k = 0; k < 5; k++) {
+            const float a = -PI_F * 0.5f + (float)k * (2.0f * PI_F / 5.0f);
+            gfx::fillCircle(cx + cosf(a) * r, cy - r * 1.1f + sinf(a) * r * 0.9f,
+                            r * 0.62f, petal);
+        }
+        gfx::fillCircle(cx, cy - r * 1.1f, r * 0.55f, core);
+        break;
+    }
+    case FORM_TIDE:
+        // A crest: the drop with a wave curled over it, so the water adult is not the
+        // child's mark made bigger.
+        gfx::strokeCircle(cx, cy - r * 0.9f, r * 1.1f, 2.5f, body);
+        gfx::fillCircle(cx + r * 0.9f, cy - r * 1.5f, r * 0.5f, body);
+        gfx::fillCircle(cx - r * 1.1f, cy - r * 0.4f, r * 0.4f, edge);
+        break;
+    case FORM_SOLAR: {
+        // A halo and six rays: the rare form should be obvious at a glance across the room.
+        const uint16_t gold = PX(RGB565(0xFF, 0xD2, 0x5A));
+        gfx::strokeCircle(cx, cy - r * 1.2f, r * 1.25f, 2.0f, gold);
+        for (int k = 0; k < 6; k++) {
+            const float a = -PI_F * 0.5f + (float)k * (PI_F / 3.0f) * 2.0f;
+            gfx::line(cx + cosf(a) * r * 1.7f, cy - r * 1.2f + sinf(a) * r * 1.7f,
+                      cx + cosf(a) * r * 2.4f, cy - r * 1.2f + sinf(a) * r * 2.4f, gold);
+        }
+        break;
+    }
+    case FORM_DUSK:
+        // Two dim puffs: the neglect form gets a shadow rather than a badge, which is
+        // the right amount of disapproval.
+        gfx::fillCircle(cx - r * 0.8f, cy - r * 0.9f, r * 0.55f, COL_DIM);
+        gfx::fillCircle(cx + r * 0.7f, cy - r * 1.3f, r * 0.45f, COL_DIM);
+        break;
+    }
+}
+
+void GamePet::drawMon()
+{
+    const MoodDef &m = MOODS[anim];
+    const mon_form_t &f = formOf(S.form);
+
+    const int jx = (jitter > 0.0f) ? (int)(sinf(jitter * 45.0f) * 5.0f) : 0;
+    const int bob = (m.bob > 0) ? (int)lroundf(sinf(bobPhase * 2.0f * PI_F * BOB_HZ) * m.bob) : 0;
+    const int cx = (int)monX + jx;
+    const int cy = (int)monY + bob;
+
+    blitForm(f, cx, cy);
+
+    const int lx = (int)lroundf(lookX);
+    const int ly = (int)lroundf(lookY);
+    const int ey = cy + f.eyeDY + ly;
+    uint8_t eyes = m.eyes;
+    if (anim == ANIM_IDLE && (animFrame % 4) == 3) eyes = EYE_SHUT;
+
+    const uint16_t ink = PX(f.ink);
+    drawEye(cx - f.eyeDX + lx, ey, f.eyeR, eyes, ink, +1);
+    drawEye(cx + f.eyeDX + lx, ey, f.eyeR, eyes, ink, -1);
+    if (m.mouth || (voice_ == Voice::Speaking && ((int)(bobPhase * 7) & 1)))
+        drawMouth(cx + lx / 2, ey + f.eyeR * 2, f.eyeR, ink);
+
+    if (outfit) outfits::draw(outfit - 1, outfitMs, cx, cy, f.w, f.h);
+    else drawMark(S.form, cx, cy - f.h / 2 + 2, f.eyeR / 3 + 1);
+
+    if (m.emote != EMOTE_NONE) {
+        drawEmote(m.emote, (float)(cx + f.w / 2 - 10), (float)(cy - f.h / 2 + 6));
+    }
+}
+
+void GamePet::drawEgg()
+{
+    const int jx = (jitter > 0.0f) ? (int)(sinf(jitter * 40.0f) * 4.0f) : 0;
+    const int cx = (int)monX + jx;
+    const int cy = (int)monY;
+
+    for (int y = -EGG_RY; y <= EGG_RY; y++) {
+        const float t = (float)y / (float)EGG_RY;
+        float hw = EGG_RX * sqrtf(1.0f - t * t);
+        if (hw <= 0.0f) continue;
+        if (y < 0) hw *= 0.74f + 0.26f * (1.0f + t);   // taper: an egg, not a ball
+        const int h = (int)(hw + 0.5f);
+        gfx::fillRect(cx - h, cy + y, h * 2 + 1, 1, COL_SHELL);
+        gfx::pixel(cx - h, cy + y, COL_SHELL_EDGE);
+        gfx::pixel(cx + h, cy + y, COL_SHELL_EDGE);
+    }
+
+    // Spots in the accent, so the egg already belongs to this app's colour.
+    gfx::fillCircle(cx - 13, cy + 12, 6, gfx::dim(COL_ACCENT, 0.35f));
+    gfx::fillCircle(cx + 11, cy - 2, 5, gfx::dim(COL_ACCENT, 0.35f));
+    gfx::fillCircle(cx + 3,  cy + 24, 4, gfx::dim(COL_ACCENT, 0.35f));
+
+    // The shell fails in steps, which is the progress bar made physical.
+    const int pct = (int)S.hatch;
+    if (pct >= HATCH_CRACK1) {
+        int px = cx - 22, py = cy - 6;
+        for (int i = 0; i < 6; i++) {
+            const int nx = px + 8, ny = py + ((i & 1) ? 5 : -5);
+            gfx::line((float)px, (float)py, (float)nx, (float)ny, COL_CRACK);
+            px = nx; py = ny;
+        }
+    }
+    if (pct >= HATCH_CRACK2) {
+        int px = cx - 16, py = cy + 14;
+        for (int i = 0; i < 4; i++) {
+            const int nx = px + 8, ny = py + ((i & 1) ? -4 : 4);
+            gfx::line((float)px, (float)py, (float)nx, (float)ny, COL_CRACK);
+            px = nx; py = ny;
+        }
+    }
+    if (outfit) outfits::draw(outfit - 1, outfitMs, cx, cy, EGG_RX * 2, EGG_RY * 2);
+}
+
+bool GamePet::monHit(int x, int y) const
+{
+    float rx, ry;
+    if (S.stage == STAGE_EGG) {
+        rx = EGG_RX + 8.0f;
+        ry = EGG_RY + 8.0f;
+    } else {
+        const mon_form_t &f = formOf(S.form);
+        rx = f.w * 0.5f + 8.0f;
+        ry = f.h * 0.5f + 8.0f;
+    }
+    const float dx = (float)x - monX;
+    const float dy = (float)y - monY;
     return (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) <= 1.0f;
 }
 
 void GamePet::drawDirt()
 {
-    // Blobs stuck to the pet, placed on a ring so they never hide its face.
-    const pet_sprite_t &s = pet_sprites[S.stage < PET_STAGE_COUNT ? S.stage : PET_STAGE_COUNT - 1];
-    const float rx = s.w * 0.30f + 14.0f;
-    const float ry = s.h * 0.30f + 14.0f;
+    const float rx = (S.stage == STAGE_EGG ? EGG_RX : formOf(S.form).w) * 0.30f + 14.0f;
+    const float ry = (S.stage == STAGE_EGG ? EGG_RY : formOf(S.form).h) * 0.30f + 14.0f;
     for (int i = 0; i < dirt; i++) {
         const float ang = -PI_F * 0.5f + (float)i * (2.0f * PI_F / 5.0f);
-        gfx::fillCircle(petX + cosf(ang) * rx, petY + sinf(ang) * ry + 4.0f, 5.0f, COL_DIM);
+        gfx::fillCircle(monX + cosf(ang) * rx, monY + sinf(ang) * ry + 4.0f, 5.0f, COL_DIM);
     }
 }
 
@@ -699,11 +1127,10 @@ void GamePet::startShakeGame()
 
 void GamePet::finishShakeGame(bool completed)
 {
-    mode = MODE_PET;
-    // Partial credit: whatever came off still counts, so a short attempt is never
-    // wasted. Finishing the job is what the pet actually thanks you for.
+    mode = MODE_MON;
     const float share = (5 - (float)dirt) / 5.0f;
     S.cleanliness = clampf(S.cleanliness + share * 55.0f, 0, 100);
+    S.vigor += VIGOR_SCRUB * share;
     if (completed) {
         S.happiness = clampf(S.happiness + 10.0f, 0, 100);
         say("all clean!");
@@ -717,11 +1144,7 @@ void GamePet::finishShakeGame(bool completed)
 
 void GamePet::updateShakeGame(float dt)
 {
-    // A shake is a spike in the magnitude of acceleration. The resting magnitude is
-    // 1 g, so anything well past that is motion rather than orientation.
     float a[3];
-    // input::tiltX/Y are trimmed and deadzoned, which is wrong for detecting a spike,
-    // so the raw read is taken here instead.
     input::readRawAccel(a);
     const float mag = sqrtf(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
 
@@ -732,7 +1155,7 @@ void GamePet::updateShakeGame(float dt)
     accelPrevMag = mag;
 
     if (accelMute <= 0.0f && shakeRefractory <= 0.0f && delta > 0.9f) {
-        shakeRefractory = 0.18f;      // one shake must not count twice
+        shakeRefractory = 0.18f;
         if (dirt > 0) {
             dirt--;
             say(dirt ? "keep going!" : "done!");
@@ -744,15 +1167,11 @@ void GamePet::updateShakeGame(float dt)
     }
 
     shakeIdle += dt;
-    if (shakeIdle > 20.0f) {
-        finishShakeGame(false);       // gives up rather than trapping the player
-    }
+    if (shakeIdle > 20.0f) finishShakeGame(false);
 }
 
 void GamePet::menuSlot(int i, float *sx, float *sy) const
 {
-    // Angle measured from straight down, so the arc is symmetric about it and the
-    // items run left to right in menu order.
     const float step = MENU_SPAN / (float)(ACT_COUNT - 1);
     const float a = (-MENU_SPAN * 0.5f + step * (float)i) * PI_F / 180.0f;
     *sx = SCR_CX + sinf(a) * MENU_R;
@@ -761,61 +1180,84 @@ void GamePet::menuSlot(int i, float *sx, float *sy) const
 
 bool GamePet::menuEnabled(int i) const
 {
-    // Sleeping blocks everything except waking and renaming.
-    return !has(PF_ASLEEP) || i == ACT_SLEEP || i == ACT_NAME;
+    if (S.stage == STAGE_EGG) return i == ACT_PET || i == ACT_NAME;
+    return !has(MF_ASLEEP) || i == ACT_REST || i == ACT_NAME;
+}
+
+int GamePet::menuHit(int x, int y) const
+{
+    int best = -1;
+    float bestD2 = MENU_HIT * MENU_HIT;
+    for (int i = 0; i < ACT_COUNT; ++i) {
+        float sx, sy; menuSlot(i, &sx, &sy);
+        const float dx = x - sx, dy = y - sy;
+        const float d2 = dx * dx + dy * dy;
+        if (d2 <= bestD2) { best = i; bestD2 = d2; }
+    }
+    return best >= 0 && menuEnabled(best) ? best : -1;
 }
 
 void GamePet::drawMenu()
 {
+    const int pressed = input::touchDown() && !dragging ? menuHit(input::tapX(), input::tapY()) : -1;
     for (int i = 0; i < ACT_COUNT; i++) {
         float sx, sy;
         menuSlot(i, &sx, &sy);
-        const int w = gfx::textWidth(ACT_LABEL[i], 1);
-        const int x = (int)(sx - w * 0.5f);
-        const int y = (int)(sy - 4.0f);
+        const char *label = actLabelFor(i, S.stage);
+        const int w = gfx::textWidth(label, 1);
 
-        // A faint disc marks the grab area, so the target is visible as well as
-        // bigger than the word in it.
         gfx::strokeCircle(sx, sy, MENU_HIT * 0.82f, 1.0f,
                           gfx::dim(COL_ACCENT, menuEnabled(i) ? 0.45f : 0.15f));
-        if (i == lastTapped) {
+        const bool active = i == pressed || i == lastTapped;
+        if (active) {
             gfx::fillCircle(sx, sy, MENU_HIT * 0.82f, gfx::dim(COL_ACCENT, 0.55f));
         }
-        gfx::text(ACT_LABEL[i], x, y,
-                  menuEnabled(i) ? (i == lastTapped ? COL_TEXT : COL_ACCENT) : COL_DIM, 1);
+        gfx::text(label, (int)(sx - w * 0.5f), (int)(sy - 4.0f),
+                  menuEnabled(i) ? (active ? COL_TEXT : COL_ACCENT) : COL_DIM, 1);
     }
 }
 
 // -------------------------------------------------------------------- frame ----
 void GamePet::enter()
 {
-    if (!petSessionId) petSessionId = (uint32_t)esp_random();
+#ifdef ARDUINO_ARCH_ESP32
+    // The launcher stays lightweight. If the integrated voice-pet image is installed,
+    // this one entry enters it; talking and caring then run together without rebooting.
+    const auto *voice = esp_partition_find_first(ESP_PARTITION_TYPE_APP,
+        ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
+    esp_app_desc_t desc{};
+    if (voice && esp_ota_get_partition_description(voice, &desc) == ESP_OK &&
+        !strcmp(desc.project_name, "clawd-pet") && esp_ota_set_boot_partition(voice) == ESP_OK) {
+        ESP.restart();
+    }
+#endif
+    if (!monSessionId) monSessionId = (uint32_t)esp_random();
 
-    // Measure the time off-screen before load() overwrites the saved clock. Only valid
-    // within one boot: after a power cycle millis() has restarted and the gap is
-    // unknowable, so the pet simply waits.
     const uint32_t nowMs = millis();
     load();
+    loadOutfit();
+    mode = MODE_MON;
+    wardrobeDown = dragging = false;
+    outfitMs = 0;
 
     uint32_t awaySec = 0;
     if (sysclock::valid() && S.lastSeenEpoch > 1700000000u) {
-        // The real clock, so the gap survives a power cycle and is exact.
         const uint32_t nowEpoch = (uint32_t)time(nullptr);
         if (nowEpoch > S.lastSeenEpoch) awaySec = nowEpoch - S.lastSeenEpoch;
-    } else if (S.sessionId == petSessionId && nowMs > S.lastSeenMs) {
+    } else if (S.sessionId == monSessionId && nowMs > S.lastSeenMs) {
         awaySec = (nowMs - S.lastSeenMs) / 1000;
         if (awaySec > AWAY_CAP_SEC) awaySec = AWAY_CAP_SEC;
     }
     if (awaySec > 0) {
-        Serial.printf("[pet] %u s passed off-screen; applying\n", (unsigned)awaySec);
+        Serial.printf("[mon] %u s passed off-screen; applying\n", (unsigned)awaySec);
         tick(awaySec);
         save();
     }
-    S.sessionId = petSessionId;
+    S.sessionId = monSessionId;
     S.lastSeenMs = nowMs;
     S.lastSeenEpoch = sysclock::valid() ? (uint32_t)time(nullptr) : 0;
 
-    anim = has(PF_ASLEEP) ? ANIM_SLEEP : (has(PF_SICK) ? ANIM_SICK : ANIM_IDLE);
+    anim = has(MF_ASLEEP) ? ANIM_SLEEP : (has(MF_SICK) ? ANIM_SICK : ANIM_IDLE);
     animFrame = 0;
     animFrameSec = 0.0f;
     animHoldSec = 0.0f;
@@ -823,7 +1265,10 @@ void GamePet::enter()
     saveCounter = 0.0f;
     thoughtTimer = 0.0f;
     lastTapped = -1;
+    tapFlashSec = 0.0f;
     bobPhase = 0.0f;
+    monX = SCR_CX;
+    monY = 176.0f;
     setDirty(0, SCR_H - 1);
 }
 
@@ -836,11 +1281,13 @@ void GamePet::leave()
 void GamePet::update(float dt)
 {
     const uint32_t ms = (uint32_t)(dt * 1000.0f + 0.5f);
+    // Keep the accessory's small movement on its own bounded clock.
+    const uint8_t shown = wardrobeActive() ? previewOutfit : outfit;
+    const uint32_t loop = shown ? outfits::duration(shown - 1) : 0;
+    outfitMs = loop ? (outfitMs + ms) % loop : 0;
     S.lastSeenMs = millis();
     if (sysclock::valid()) S.lastSeenEpoch = (uint32_t)time(nullptr);
 
-    // Advance the simulation in whole seconds: taking dt directly would round every
-    // 16 ms frame down to zero and the pet would never age.
     tickAccum += dt;
     const uint32_t wholeSec = (uint32_t)tickAccum;
     if (wholeSec > 0) {
@@ -848,7 +1295,6 @@ void GamePet::update(float dt)
         tick(wholeSec);
     }
 
-    // --- face ---------------------------------------------------------------
     animFrameSec += dt;
     if (animFrameSec >= FRAME_SEC) {
         animFrameSec = 0.0f;
@@ -857,75 +1303,63 @@ void GamePet::update(float dt)
     if (animHoldSec > 0.0f) {
         animHoldSec -= dt;
     } else {
-        // Drift back to the resting state, which also tracks being asleep or ill
-        // without those needing to be forced every frame.
-        const int rest = has(PF_ASLEEP) ? ANIM_SLEEP : (has(PF_SICK) ? ANIM_SICK : ANIM_IDLE);
+        const int rest = has(MF_ASLEEP) ? ANIM_SLEEP : (has(MF_SICK) ? ANIM_SICK : ANIM_IDLE);
         if (anim != rest) setAnimation(rest, 0.0f);
     }
 
-    // --- thoughts -----------------------------------------------------------
     thoughtAgeSec += dt;
     thoughtTimer += ms;
     if (thoughtTimer >= THOUGHT_EVERY_MS) {
         thoughtTimer = 0;
-        rollThoughts(0);
+        rollThoughts();
     }
 
-    // --- touch --------------------------------------------------------------
-    lastTapped = -1;
+    tapFlashSec = fmaxf(0.0f, tapFlashSec - dt);
+    if (tapFlashSec <= 0.0f) lastTapped = -1;
 
-    // The eyes follow the finger whenever it is down, fading back when it lifts.
-    //
-    // Not while it is being dragged, though: then the body is at the finger, so the
-    // offset comes out near zero and only jitters with the per-frame difference
-    // between the finger and where the body had got to. There is nothing to look at
-    // when you are being carried.
     if (input::touchDown() && !dragging) {
-        lookX = clampf((input::tapX() - petX) * 0.12f, -5.0f, 5.0f);
-        lookY = clampf((input::tapY() - petY) * 0.12f, -5.0f, 5.0f);
+        lookX = clampf((input::tapX() - monX) * 0.12f, -5.0f, 5.0f);
+        lookY = clampf((input::tapY() - monY) * 0.12f, -5.0f, 5.0f);
     } else {
         lookX *= 1.0f - fminf(1.0f, 4.0f * dt);
         lookY *= 1.0f - fminf(1.0f, 4.0f * dt);
     }
 
-    if (mode == MODE_SHAKE) {
-        // Any tap leaves the game, so it can never trap the player.
+    if (voiceActive()) {
+        dragging = wardrobeDown = false;
+    } else if (mode == MODE_WARDROBE) {
+        updateWardrobe();
+    } else if (mode == MODE_SHAKE) {
         if (input::tapped()) {
             finishShakeGame(dirt == 0);
         } else {
             updateShakeGame(dt);
         }
     } else {
-        // Holding on the pet picks it up. The touch is captured on press rather than
-        // on release, so a drag that ends off the pet still counts as a drag.
-        if (input::touchDown() && petHit(input::tapX(), input::tapY())
+        if (input::touchDown() && monHit(input::tapX(), input::tapY())
             && input::touchHeldMs() > 200) {
             dragging = true;
         }
         if (dragging) {
-            petX = clampf((float)input::tapX(), 84.0f, 276.0f);
-            petY = clampf((float)input::tapY(), 126.0f, 240.0f);
+            monX = clampf((float)input::tapX(), 84.0f, 276.0f);
+            monY = clampf((float)input::tapY(), 126.0f, 240.0f);
         } else {
-            // Drifts back to its resting place.
-            petX += ((float)PET_CX - petX) * fminf(1.0f, 2.5f * dt);
-            petY += ((float)PET_CY - petY) * fminf(1.0f, 2.5f * dt);
+            monX += ((float)PET_CX - monX) * fminf(1.0f, 2.5f * dt);
+            monY += ((float)PET_CY - monY) * fminf(1.0f, 2.5f * dt);
         }
 
         if (input::tapped()) {
-            // Touching the panel spikes the accelerometer, so the IMU is ignored for a
-            // moment afterwards rather than being read as a shake.
             accelMute = 0.25f;
             if (dragging) {
-                dragging = false;               // putting it down is not a poke
-            } else if (petHit(input::tapX(), input::tapY())) {
-                handlePetTouch();
+                dragging = false;
+            } else if (monHit(input::tapX(), input::tapY())) {
+                handleMonTouch();
             } else {
                 handleMenuTouch();
             }
         }
     }
 
-    // Poke heat cools off, so a burst of taps annoys while a steady one does not.
     if (pokeCool > 0.0f) {
         pokeCool -= dt;
         if (pokeCool <= 0.0f) pokeHeat = 0.0f;
@@ -940,20 +1374,26 @@ void GamePet::update(float dt)
     }
 }
 
-void GamePet::handlePetTouch()
+void GamePet::handleMonTouch()
 {
     pokeHeat += 1.0f;
     pokeCool = 1.2f;
 
+    if (S.stage == STAGE_EGG) {
+        // Warming it in the hands is the egg's only game, and it is also the tutorial for
+        // touching the creature that comes out of it.
+        act(ACT_PET);
+        return;
+    }
+
     if (pokeHeat >= 3.0f) {
-        // Rough handling. Losing a little happiness is the point: poking is not the
-        // same as petting, and the pet says so.
         S.happiness = clampf(S.happiness - 2.0f, 0, 100);
         say("hey, that is enough");
         setAnimation(ANIM_ANNOYED, ACTION_HOLD_SEC);
         jitter = 0.6f;
     } else {
         S.happiness = clampf(S.happiness + 6.0f, 0, 100);
+        S.joy += 0.5f;
         S.attentions++;
         say("hehe");
         setAnimation(ANIM_HAPPY, ACTION_HOLD_SEC);
@@ -963,22 +1403,13 @@ void GamePet::handlePetTouch()
 
 void GamePet::handleMenuTouch()
 {
-    // Nearest slot wins if the touch is inside any grab radius, rather than the first
-    // one that matches: on an arc the ends are closer to their neighbours' labels than
-    // they are to their own centre, and taking the nearest is what the finger meant.
-    int best = -1;
-    float bestD2 = MENU_HIT * MENU_HIT;
-    for (int i = 0; i < ACT_COUNT; i++) {
-        float sx, sy;
-        menuSlot(i, &sx, &sy);
-        const float dx = (float)input::tapX() - sx;
-        const float dy = (float)input::tapY() - sy;
-        const float d2 = dx * dx + dy * dy;
-        if (d2 <= bestD2) { best = i; bestD2 = d2; }
-    }
-    if (best >= 0 && menuEnabled(best)) {
+    if (voiceActive()) return;
+    const int best = menuHit(input::tapX(), input::tapY());
+    if (best >= 0) {
         lastTapped = best;
-        act(best);
+        tapFlashSec = 0.15f;
+        if (best == ACT_NAME) openWardrobe();
+        else act(best);
     }
 }
 
@@ -986,9 +1417,30 @@ void GamePet::render()
 {
     gfx::clear(COL_BG);
 
+    if (voiceActive()) {
+        gfx::textCentered("CLAWD PET", 28, COL_ACCENT, 2);
+        const char *label = voice_ == Voice::Listening ? "LISTENING" :
+            (voice_ == Voice::Thinking ? "THINKING" : "SPEAKING");
+        gfx::textCentered(label, 67, COL_DIM, 1);
+        if (S.stage == STAGE_EGG) drawEgg(); else drawMon();
+        const float t = bobPhase * 6;
+        for (int i = -2; i <= 2; ++i) {
+            const int h = 3 + (int)(fabsf(sinf(t + i * 0.8f)) * 9);
+            gfx::fillRect(178 + i * 9, 225 - h / 2, 4, h, COL_ACCENT);
+        }
+        setDirty(0, SCR_H - 1);
+        return;
+    }
+
+    if (mode == MODE_WARDROBE) {
+        renderWardrobe();
+        setDirty(0, SCR_H - 1);
+        return;
+    }
+
+    const char *stage = (S.stage == STAGE_EGG) ? "EGG" : formOf(S.form).stage;
     char head[48];
-    snprintf(head, sizeof(head), "%s  |  %s  |  %s", S.name, STAGE_NAMES[S.stage],
-             sysclock::timeText());
+    snprintf(head, sizeof(head), "%.8s | %s | %s", S.name, stage, sysclock::timeText());
     gfx::textCentered(head, HEAD_Y, COL_ACCENT, 1);
     gfx::fillRect(RULE_X0, RULE1_Y, RULE_X1 - RULE_X0, 1, COL_RULE);
 
@@ -1004,9 +1456,12 @@ void GamePet::render()
     drawMeter("CLEAN",  S.cleanliness, METER_COL_B, METER_ROW1);
 
     {
+        // The egg's third row is its progress; after hatching it is health, where it was.
+        const char *label = (S.stage == STAGE_EGG) ? "WARM" : "HEALTH";
+        const float value = (S.stage == STAGE_EGG) ? S.hatch : S.health;
         char line[32];
-        const int filled = (int)lroundf(clampf(S.health, 0, 100) / 100.0f * BAR_CHARS);
-        int k = snprintf(line, sizeof(line), "%-6s [", "HEALTH");
+        const int filled = (int)lroundf(clampf(value, 0, 100) / 100.0f * BAR_CHARS);
+        int k = snprintf(line, sizeof(line), "%-6s [", label);
         for (int i = 0; i < BAR_CHARS; i++) line[k++] = (i < filled) ? '#' : '.';
         line[k++] = ']';
         line[k] = 0;
@@ -1014,22 +1469,45 @@ void GamePet::render()
         gfx::text(line, (int)(SCR_CX - w * 0.5f), HEALTH_Y, COL_TEXT, 1);
     }
 
-    drawPet();
+    if (S.stage == STAGE_EGG) drawEgg();
+    else drawMon();
     drawThought();
     drawMenu();
+
+    {
+        // The bottom line is the only place that can say why the mon has not evolved yet.
+        // Both conditions have to hold, so it names whichever one is actually the
+        // bottleneck rather than showing two numbers nobody can read at a glance.
+        char line[28];
+        int k;
+        if (S.stage == STAGE_EGG) {
+            k = snprintf(line, sizeof(line), "EGG %d%%  ", (int)S.hatch);
+        } else if (S.stage == STAGE_ADULT) {
+            k = snprintf(line, sizeof(line), "MAX  ");
+        } else {
+            const Gate g = (S.stage == STAGE_BABY) ? GATE_CHILD : GATE_ADULT;
+            if (S.carePoints < g.care) {
+                k = snprintf(line, sizeof(line), "GROW %d/%d  ",
+                             (int)S.carePoints, (int)g.care);
+            } else {
+                const uint32_t left = (g.ageSec > S.ageSec) ? (g.ageSec - S.ageSec) : 0;
+                k = snprintf(line, sizeof(line), "AGE %lum  ",
+                             (unsigned long)((left + 59) / 60));
+            }
+        }
+        snprintf(line + k, sizeof(line) - k, "SEEN %d/7", __builtin_popcount(S.seen));
+        gfx::textCentered(line, DEX_Y, COL_DIM, 1);
+    }
     setDirty(0, SCR_H - 1);
 }
 
 void GamePet::renderShakeGame()
 {
-    // The meters give way to the game: what matters while it runs is how much dirt is
-    // left and what to do about it.
     char line[32];
     snprintf(line, sizeof(line), "SHAKE  %u LEFT", (unsigned)dirt);
     gfx::textCentered(line, METER_ROW0, dirt ? COL_ACCENT : COL_TEXT, 1);
     gfx::textCentered("hold the badge and shake it", METER_ROW1 + 4, COL_DIM, 1);
 
-    // A health-style bar showing progress, reusing the same idiom as the meters.
     {
         const int done = 5 - (int)dirt;
         char bar[32];
@@ -1042,7 +1520,8 @@ void GamePet::renderShakeGame()
     }
 
     drawDirt();
-    drawPet();
+    if (S.stage == STAGE_EGG) drawEgg();
+    else drawMon();
     drawThought();
     gfx::textCentered("tap to stop", SCR_H - 22, COL_DIM, 1);
 }

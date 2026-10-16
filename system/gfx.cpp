@@ -55,6 +55,9 @@ void strokeCircle(float cx, float cy, float r, float thickness, uint16_t color)
     const float half = thickness * 0.5f;
     const float rIn = r - half;
     const float rOut = r + half;
+    // Comparing squared distances avoids a square root for every interior pixel.
+    // A nonpositive inner radius has no hole (thick strokes can fill the disc).
+    const float rIn2 = rIn > 0.0f ? rIn * rIn : 0.0f;
     const float rOut2 = rOut * rOut;
 
     int x0 = (int)floorf(cx - rOut); if (x0 < 0) x0 = 0;
@@ -69,8 +72,7 @@ void strokeCircle(float cx, float cy, float r, float thickness, uint16_t color)
             const float dx = (x + 0.5f) - cx;
             const float d2 = dx * dx + dy * dy;
             if (d2 > rOut2) continue;
-            const float d = sqrtf(d2);
-            if (d < rIn) continue;
+            if (d2 < rIn2) continue;
             row[x] = color;
         }
     }
@@ -118,7 +120,7 @@ void line(float x0, float y0, float x1, float y1, uint16_t color)
 // not once per pixel.
 static inline void unpack(uint16_t c, int *r, int *g, int *b)
 {
-    const uint16_t h = BSWAP16(c);          // back to host-order RGB565
+    const uint16_t h = PX(c);          // back to host-order RGB565 on either backend
     *r = (h >> 11) & 0x1F;
     *g = (h >> 5)  & 0x3F;
     *b =  h        & 0x1F;
@@ -129,7 +131,7 @@ static inline uint16_t pack(int r, int g, int b)
     r = r < 0 ? 0 : (r > 31 ? 31 : r);
     g = g < 0 ? 0 : (g > 63 ? 63 : g);
     b = b < 0 ? 0 : (b > 31 ? 31 : b);
-    return BSWAP16((uint16_t)((r << 11) | (g << 5) | b));
+    return PX((uint16_t)((r << 11) | (g << 5) | b));
 }
 
 uint16_t dim(uint16_t color, float amount)
@@ -145,7 +147,8 @@ uint16_t mix(uint16_t a, uint16_t b, float t)
     int ar, ag, ab, br, bg, bb;
     unpack(a, &ar, &ag, &ab);
     unpack(b, &br, &bg, &bb);
-    if (t < 0) t = 0; if (t > 1) t = 1;
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
     return pack((int)(ar + (br - ar) * t + 0.5f),
                 (int)(ag + (bg - ag) * t + 0.5f),
                 (int)(ab + (bb - ab) * t + 0.5f));

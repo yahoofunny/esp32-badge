@@ -23,7 +23,8 @@ public:
     // Paints the launcher icon centred on (cx, cy), occupying roughly `size`
     // pixels across. The default is a plain disc in the accent colour; games with
     // their own art override it.
-    virtual void drawIcon(float cx, float cy, float size) const;
+    virtual void drawIcon(float cx, float cy, float size) const
+    { gfx::fillCircle(cx, cy, size * 0.5f, accent()); }
 
     virtual void enter() {}                 // becoming the active screen
     virtual void leave() {}                 // being replaced

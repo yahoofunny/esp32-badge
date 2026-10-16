@@ -41,7 +41,9 @@ COL_HINT = (0x5A, 0x5A, 0x72)
 ENTRIES = [
     ("CLAWD ROLL", (0xE8, 0x3B, 0x3B)),
     ("CLAWD TAP", (0x2E, 0xC4, 0x6B)),
-    ("XIAOZHI", (0x4A, 0x9E, 0xFF)),
+    ("CLAWD PET", (0xD9, 0x77, 0x57)),
+    ("PHOTOS", (0x7A, 0x8B, 0xF0)),
+    ("SETTINGS", (0xE6, 0xB4, 0x50)),
 ]
 
 
@@ -158,7 +160,7 @@ def main() -> int:
         px[int(sx), int(sy)] = (255, 255, 255)
 
     text_centered(px, font, ENTRIES[sel][0], int(CY + ORBIT_Y) + 34, COL_LABEL, 2)
-    text_centered(px, font, "tilt or tap to play", 330, COL_HINT, 1)
+    text_centered(px, font, "drag ring - tap", 330, COL_HINT, 1)
 
     # bezel: everything outside the round panel is not visible on the device
     for y in range(SCR_H):
@@ -174,7 +176,7 @@ def main() -> int:
     print()
     print("placement check (centre-out, minus a 2 px margin):")
     for label, s, y, sc in [("name", ENTRIES[sel][0], int(CY + ORBIT_Y) + 34, 2),
-                            ("hint", "tilt or tap to play", 330, 1)]:
+                            ("hint", "drag ring - tap", 330, 1)]:
         w = text_width(font, s, sc)
         worst = y + CELL * sc - 1
         hw = visible_half_width(worst)

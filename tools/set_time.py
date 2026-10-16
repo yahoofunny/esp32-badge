@@ -19,11 +19,10 @@ s = serial.Serial()
 s.port = port
 s.baudrate = 115200
 s.timeout = 0.3
-# Same care as the monitor: DTR deasserted before opening, so the open itself cannot pull
-# the chip into download mode.
+# Native CDC needs DTR enabled to receive; RTS stays inactive (no reset pulse).
 s.dsrdtr = False
 s.rtscts = False
-s.dtr = False
+s.dtr = True
 s.rts = False
 s.open()
 time.sleep(0.2)

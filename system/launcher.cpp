@@ -5,7 +5,6 @@
 
 #include "gfx.h"
 #include "input.h"
-#include "clock.h"
 #include "sound.h"
 
 namespace launcher {
@@ -59,6 +58,22 @@ static float leanHeld = 0.0f;   // seconds the current lean has been sustained
 static float age      = 0.0f;   // seconds since the launcher appeared
 static int   launching = -1;
 static float launchT   = 0.0f;
+static bool touchTracking = false, touchDragging = false, angleValid = false;
+static bool touchEligible = false;
+static int touchStartX = 0, touchStartY = 0;
+static float touchAngle = 0, dragAngle = 0, dragStartPos = 0;
+static float tiltCooldown = 0;
+
+// Correct for the elliptical orbit before measuring rotation. Near the centre
+// an angle is unstable, so crossing it temporarily pauses rotation.
+static bool pointerAngle(int x, int y, float *angle)
+{
+    const float nx = (x - SCR_CX) / ORBIT_X, ny = (y - SCR_CY) / ORBIT_Y;
+    const float r2 = nx * nx + ny * ny;
+    if (r2 < 0.20f || r2 > 3.8f) return false;
+    *angle = atan2f(ny, nx);
+    return true;
+}
 
 // The step count is unbounded; this is where it becomes an array index.
 static inline int selIndex()
@@ -100,6 +115,8 @@ void begin(Game *const *games, int count)
     age = 0.0f;
     launching = -1;
     launchT = 0.0f;
+    touchTracking = touchDragging = angleValid = touchEligible = false;
+    tiltCooldown = 0;
 }
 
 static void step(int dir)
@@ -110,6 +127,47 @@ static void step(int dir)
 Game *update(float dt)
 {
     age += dt;
+    if (g_count <= 0) return nullptr;
+    tiltCooldown = fmaxf(0, tiltCooldown - dt);
+
+    bool draggedRelease = false;
+    if (launching < 0) {
+        if (input::touchDown()) {
+            const int x = input::tapX(), y = input::tapY();
+            float a = 0;
+            const bool valid = pointerAngle(x, y, &a);
+            if (!touchTracking) {
+                touchTracking = true;
+                touchDragging = false;
+                touchStartX = x; touchStartY = y;
+                dragStartPos = selPos; dragAngle = 0;
+                touchEligible = valid;
+                angleValid = valid; touchAngle = a;
+            } else if (touchEligible) {
+                if (valid && angleValid) {
+                    float delta = a - touchAngle;
+                    if (delta > PI_F) delta -= 2 * PI_F;
+                    if (delta < -PI_F) delta += 2 * PI_F;
+                    dragAngle += delta;
+                    const float dx = x - touchStartX, dy = y - touchStartY;
+                    if (dx * dx + dy * dy >= 100 && fabsf(dragAngle) > 0.05f)
+                        touchDragging = true;
+                    if (touchDragging) {
+                        selPos = dragStartPos - dragAngle * g_count / (2 * PI_F);
+                        sel = (int)lroundf(selPos);
+                    }
+                }
+                angleValid = valid; touchAngle = a;
+            }
+            // Taps and hand motion must not trigger a simultaneous tilt step.
+            armed = false; leanHeld = 0; tiltCooldown = 0.35f;
+        } else if (touchTracking) {
+            draggedRelease = touchDragging;
+            if (touchDragging) sel = (int)lroundf(selPos);
+            touchTracking = touchDragging = angleValid = touchEligible = false;
+            tiltCooldown = 0.35f;
+        }
+    }
 
     if (launching < 0) {
         // --- tilt stepper ----------------------------------------------------
@@ -117,7 +175,7 @@ Game *update(float dt)
         // accelerometer is noisy and a held board wobbles past any single-sample
         // limit, so the dwell is what separates intent from handling.
         const float tx = input::tiltX();
-        if (armed) {
+        if (!touchTracking && tiltCooldown <= 0 && armed) {
             if (fabsf(tx) > TILT_STEP) {
                 leanHeld += dt;
                 if (leanHeld >= TILT_DWELL) {
@@ -128,13 +186,13 @@ Game *update(float dt)
             } else {
                 leanHeld = 0.0f;
             }
-        } else if (fabsf(tx) < TILT_RELEASE) {
+        } else if (!touchTracking && tiltCooldown <= 0 && fabsf(tx) < TILT_RELEASE) {
             armed = true;
             leanHeld = 0.0f;
         }
 
         // --- touch -----------------------------------------------------------
-        if (input::tapped()) {
+        if (input::tapped() && !draggedRelease) {
             const int txp = input::tapX(), typ = input::tapY();
             for (int i = 0; i < g_count; i++) {
                 float ix, iy;
@@ -174,7 +232,7 @@ Game *update(float dt)
 
     // Ease the carousel toward the selection.
     const float diff = (float)sel - selPos;
-    selPos += diff * fminf(1.0f, STEP_ANIM * dt);
+    if (!touchTracking) selPos += diff * fminf(1.0f, STEP_ANIM * dt);
 
     return nullptr;
 }
@@ -258,15 +316,13 @@ void render()
         drawIconAt(i, (i == launching) ? selBoost : 1.0f);
     }
 
-    // Names: the selected entry under the ring, and a hint line along the bottom. The
-    // time goes above it, top left, where it cannot collide with the ring.
+    // Keep the orbit as the focus: selected name and a quiet gesture hint only.
     if (launching < 0) {
-        gfx::text(sysclock::timeText(), 62, 48, COL_HINT, 1);
         gfx::textCentered(g_games[selIndex()]->name(), (int)(SCR_CY + ORBIT_Y) + 34, COL_LABEL, 2);
         // Kept short on purpose. Only about 176 of the 360 px of width are visible
         // at this height, and the earlier longer wording ("tilt to browse - tap to
         // play", 209 px) had its ends hidden behind the bezel.
-        gfx::textCentered(g_count > 1 ? "tilt or tap to play" : "tap to play",
+        gfx::textCentered(g_count > 1 ? "drag ring - tap" : "tap to play",
                           330, COL_HINT, 1);
     } else {
         gfx::textCentered(g_games[launching]->name(), SCR_H - 30, COL_LABEL, 2);

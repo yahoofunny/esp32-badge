@@ -1,29 +1,34 @@
 #pragma once
 
 #include "game.h"
+#include <stddef.h>
 
-// clawd's pet, in the idiom of claude-code-tamagotchi.
+// A pocket mon: an egg, a creature that hatches from it, and a branching evolution
+// tree that decides what it grows into.
 //
-// That project's model is adopted here because it is better than the blog version
-// this app started as:
+// The care model is the pet's -- four needs that all decay, a derived health, sickness
+// that begins and ends on its own -- because that part is already right, and a Tamagotchi
+// is a Tamagotchi. What is different is what the care is *for*:
 //
-//   * four needs -- hunger, happiness, energy, cleanliness -- that all decay and all
-//     read "fuller is better". The blog version tracked hunger as a need that
-//     *rises*, so a full bar meant a starving pet and an empty one meant a fed pet.
-//   * a derived health value that lags the average of the four, so neglect surfaces
-//     as illness rather than as a fifth bar to keep topped up.
-//   * sickness that both starts and ends by itself, from health and cleanliness.
-//   * growth driven by accumulated care rather than by elapsed time alone.
+//   * the first screen is an egg. It has to be kept warm to hatch, so the needs are
+//     load-bearing before there is anything to look after.
+//   * two tracks, joy and vigor, quietly accumulate from the state of the needs and from
+//     which actions are used. Which one leads is what picks the child form, and the ratio
+//     between them plus the overall care picks the adult one -- so the same egg raised two
+//     ways gives two different creatures, and the dex fills up over several lifetimes.
+//   * the body is clawd's silhouette at one size per stage with the form's colour, and the
+//     forms are told apart by the mark drawn on top of it. See tools/make_mon_sprites.py.
 //
-// One departure: the pet is not a face. It is clawd himself, drawn from the same
-// artwork the rolling game uses, with his eyes redrawn every frame so that one body
-// per life stage can carry every mood. See the body section of the implementation.
-//
-// Defined at file scope so the static tables in the implementation can size
-// themselves with them; private class enums are not visible there.
-enum PetAction { ACT_FEED, ACT_PLAY, ACT_PET, ACT_SLEEP, ACT_BATHE, ACT_NAME, ACT_COUNT };
-enum PetAnim   { ANIM_IDLE, ANIM_HAPPY, ANIM_EAT, ANIM_SLEEP, ANIM_BATH, ANIM_SICK,
+// Namespaced so action and animation names do not leak into other games.
+// This model is shared by the Arduino launcher and the ESP-IDF voice companion.
+namespace mon {
+enum MonForm { FORM_PIP, FORM_LEAF, FORM_AQUA, FORM_BLOOM, FORM_TIDE, FORM_SOLAR,
+               FORM_DUSK, FORM_COUNT };
+enum MonStage { STAGE_EGG, STAGE_BABY, STAGE_CHILD, STAGE_ADULT };
+enum MonAction { ACT_FEED, ACT_PLAY, ACT_PET, ACT_REST, ACT_SCRUB, ACT_NAME, ACT_COUNT };
+enum MonAnim   { ANIM_IDLE, ANIM_HAPPY, ANIM_EAT, ANIM_SLEEP, ANIM_BATH, ANIM_SICK,
                  ANIM_ANNOYED, ANIM_COUNT };
+}  // namespace mon
 
 class GamePet : public Game {
 public:
@@ -31,85 +36,96 @@ public:
     uint16_t    accent() const override { return PX(RGB565(0xD9, 0x77, 0x57)); }
     void drawIcon(float cx, float cy, float size) const override;
 
-    // Exercises the save/load round-trip. Navigating the app is the only other way
-    // to test persistence, and reaching a state worth checking takes minutes.
-    bool selfTest();
-
     void enter() override;
     void leave() override;
     void update(float dt) override;
     void render() override;
 
+    enum class Voice { Idle, Listening, Thinking, Speaking };
+    // UI-thread only. Voice changes presentation, never the saved needs.
+    void setVoice(Voice voice) { voice_ = voice; }
+    void react(const char *emotion);
+    bool voiceActive() const { return voice_ != Voice::Idle; }
+    bool wardrobeActive() const { return mode == MODE_WARDROBE && !voiceActive(); }
+    void describe(char *out, size_t size) const;
+
 private:
     struct State {
-        // Time the pet spent off-screen is accounted for, so being away does not freeze
-        // it -- and with the RTC there is a real wall clock to measure it against, which
-        // is the whole difference between a pet that grows and one that is a baby
-        // forever: millis() restarts at zero on every power-on, so the gap across a power
-        // cycle used to be unknowable and was simply lost. lastSeenMs and sessionId are
-        // still kept for the case where the clock has never been set.
         uint32_t ageSec;
         uint32_t lastSeenEpoch;   // unix seconds, from the RTC
         uint32_t lastSeenMs;      // the same-boot fallback
         uint32_t sessionId;
 
-        float    hunger;        // all four are 0..100, higher is better
+        float    hunger;
         float    happiness;
         float    energy;
         float    cleanliness;
-        float    health;        // derived: drags towards the average of the four
-        float    carePoints;    // accumulates while the pet is well kept
-        uint8_t  stage;         // 0 baby, 1 child, 2 teen, 3 adult
+        float    health;          // derived: drags towards the average of the four
+        float    carePoints;      // accumulates while the mon is well kept
+        float    joy;             // the two branch tracks; which leads decides the form
+        float    vigor;
+        float    careSum;         // running average of the needs, for the neglect branch
+        uint16_t careSamples;
+
+        uint8_t  stage;           // MonStage
+        uint8_t  form;            // index into mon_forms[], meaningful from STAGE_BABY up
         uint8_t  flags;
+        uint8_t  seen;            // dex: one bit per form, kept across lifetimes
+        float    hatch;           // 0..100, the egg's progress
         uint16_t feedCount;
-        uint16_t attentions;    // plays and pets together
+        uint16_t attentions;
         char     name[12];
     };
 
     enum {
-        PF_ASLEEP = 1 << 0,
-        PF_SICK   = 1 << 1,
+        MF_ASLEEP = 1 << 0,
+        MF_SICK   = 1 << 1,
     };
 
-    struct PetSave {
+    struct MonSave {
         uint32_t magic;
         State    state;
     };
 
-    State S;
+    State S{};
+    Voice voice_ = Voice::Idle;
+    bool restoreLegacy();
+    bool sane() const;
 
-    // Two modes. The pet is draggable and pokeable in both; the shake game takes over
-    // the meter area while it runs.
-    enum { MODE_PET, MODE_SHAKE };
-    uint8_t mode = MODE_PET;
+    enum { MODE_MON, MODE_SHAKE, MODE_WARDROBE };
+    uint8_t mode = MODE_MON;
+    // Stored separately from the original care blob, preserving both old layouts.
+    uint8_t outfit = 0, previewOutfit = 0; // 0 = evolution mark; others add accessories
+    uint32_t outfitMs = 0;
+    bool wardrobeDown = false;
+    int wardrobeStartX = 0, wardrobeStartY = 0;
+    void loadOutfit();
+    void wearOutfit();
+    void openWardrobe();
+    void stepOutfit(int direction);
+    void updateWardrobe();
+    void renderWardrobe();
 
-    // Direct manipulation. The pet sits at (petX, petY) rather than at a fixed point,
-    // because being able to pick it up is most of what makes it feel alive; it drifts
-    // back to rest when released. lookX/lookY nudge the eyes towards the last touch.
-    float petX = SCR_CX, petY = 176.0f;
+    // Direct manipulation, as with the pet: it is draggable, and it looks at the finger.
+    float monX = SCR_CX, monY = 176.0f;
     float lookX = 0.0f, lookY = 0.0f;
     bool  dragging = false;
-    float pokeHeat = 0.0f;      // builds with rapid taps; spills over into annoyance
+    float pokeHeat = 0.0f;
     float pokeCool = 0.0f;
     float jitter = 0.0f;
-    float faceJx = 0.0f;   // horizontal wobble applied while the pet is annoyed
 
-    // Shake-off-the-dirt. Accelerometer spikes past a threshold knock a blob off, with
-    // a refractory period so one shake cannot count twice.
+    // Shake-off-the-dirt.
     uint8_t dirt = 0;
     float   shakeIdle = 0.0f;
     float   shakeRefractory = 0.0f;
     float   accelPrevMag = 1.0f;
-    float   accelMute = 0.0f;   // ignores the IMU briefly after a tap: touching the
-                                // panel spikes the accelerometer hard
+    float   accelMute = 0.0f;
 
-    // The mood. An animation is a face and a movement; an action switches to its own
-    // for a moment and the pet then drifts back to idle.
-    uint8_t anim      = ANIM_IDLE;
-    uint8_t animFrame = 0;         // counts frames within the mood; drives the blink
+    uint8_t anim      = mon::ANIM_IDLE;
+    uint8_t animFrame = 0;
     float   animFrameSec = 0.0f;
-    float   animHoldSec  = 0.0f;   // seconds left before reverting to idle
-    float   bobPhase     = 0.0f;   // free-running, so the bob does not tick with frames
+    float   animHoldSec  = 0.0f;
+    float   bobPhase     = 0.0f;
 
     char  thought[42] = {0};
     float thoughtAgeSec = 0.0f;
@@ -118,18 +134,23 @@ private:
     float saveCounter  = 0.0f;
     float thoughtTimer = 0.0f;
     int   lastTapped   = -1;
+    float tapFlashSec = 0.0f;
 
     // --- simulation ---------------------------------------------------------
     bool  has(uint8_t f) const { return (S.flags & f) != 0; }
     void  setFlag(uint8_t f, bool on);
-    void  resetToNewPet();
+    void  resetToEgg();
     void  tick(uint32_t sec);
     void  decay(uint32_t sec);
-    void  rollThoughts(uint32_t sec);
+    void  accrueTracks(float mins);
+    void  rollThoughts();
     void  act(int action);
     void  say(const char *fmt, ...);
     void  setAnimation(int a, float holdSec);
     float averageCare() const;
+    void  discover(int form);
+    void  hatchEgg();
+    void  evolve();
 
     // --- persistence --------------------------------------------------------
     void load();
@@ -137,21 +158,22 @@ private:
 
     // --- presentation -------------------------------------------------------
     void drawMeter(const char *label, float value, int x, int y);
-    void drawPet();
+    void drawMon();
+    void drawEgg();
+    void drawMark(int form, int cx, int cy, int scale);
     void drawDirt();
     void drawMenu();
     void drawThought();
-    // Where a menu item sits and whether it can be used, both of which the drawing and
-    // the hit test need to agree on exactly.
     void menuSlot(int i, float *sx, float *sy) const;
     bool menuEnabled(int i) const;
+    int menuHit(int x, int y) const;
 
     // --- interaction --------------------------------------------------------
-    void handlePetTouch();          // drag / poke, on the pet itself
+    void handleMonTouch();
     void handleMenuTouch();
     void startShakeGame();
     void finishShakeGame(bool completed);
     void updateShakeGame(float dt);
     void renderShakeGame();
-    bool petHit(int x, int y) const;
+    bool monHit(int x, int y) const;
 };

@@ -3,6 +3,14 @@
 This repository is licensed AGPL-3.0 (see [LICENSE](LICENSE)). It also contains or
 derives from work by others, listed here with its own terms.
 
+## XiaoZhi voice client — MIT
+
+The optional voice-pet build uses [78/xiaozhi-esp32](https://github.com/78/xiaozhi-esp32)
+v2.3.0 (MIT), copyright 2025 Shenzhen Xinzhi Future Technology Co., Ltd. and contributors.
+The preparation script checks out that source with its original LICENSE intact;
+custom display/platform integration is in `firmware/clawd_pet/`. Its ESP-IDF and
+managed dependencies retain their upstream notices and licenses.
+
 ## The clawd artwork — AGPL-3.0
 
 The creature used by the rolling game, the pet and the project icon comes from
@@ -17,12 +25,16 @@ pet, by way of the blog it was first copied into.
 | `system/assets_pet.h` | the same art at four sizes, the pet's body |
 | `games/clawd-roll/icon.png`, `icon-256.png` | the project icon, composed from it |
 | `system/assets_icons.h` | the same art, posed three ways |
+| `assets/clawd-gifs/*.gif` | 24 original clawd-on-desk animations retained as wardrobe design references |
+| `system/outfits.cpp` | small pixel accessories drawn over the existing pet body, inspired by those references |
 
 The launcher icons are not new artwork: `tools/make_icon_sprites.py` takes the source
 above and moves a few pixel runs in it -- leaning it, raising one arm, adding ears -- so
-the three entries read as three poses of one creature. Props taken from clawd-on-desk's
-`assets/gif` animations were tried and rejected; at launcher size they sat on the
-character like objects rather than belonging to him. None of those GIFs are vendored.
+the three entries read as three poses of one creature. The pet wardrobe retains 24
+animations from clawd-on-desk's `assets/gif` under `assets/clawd-gifs/` as design
+references. The device draws small accessories with pixel primitives in
+`system/outfits.cpp`; it does not include those complete GIF animations or resize
+the existing pet body.
 
 This choice of licence is what made AGPL-3.0 the right one for the repository as a
 whole: keeping the art and shipping the source under anything more permissive would
