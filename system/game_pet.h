@@ -118,7 +118,8 @@ private:
     uint8_t dirt = 0;
     float   shakeIdle = 0.0f;
     float   shakeRefractory = 0.0f;
-    float   accelPrevMag = 1.0f;
+    float   shakeSampleSec = 0.0f;
+    float   accelPrev[3] = {0.0f, 0.0f, 1.0f};
     float   accelMute = 0.0f;
 
     uint8_t anim      = mon::ANIM_IDLE;

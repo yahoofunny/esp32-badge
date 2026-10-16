@@ -1117,7 +1117,8 @@ void GamePet::startShakeGame()
     dirt = 5;
     shakeIdle = 0.0f;
     shakeRefractory = 0.0f;
-    accelPrevMag = 1.0f;
+    shakeSampleSec = 0.0f;
+    input::readRawAccel(accelPrev);
     say("shake it off!");
     setAnimation(ANIM_BATH, 0.0f);
 }
@@ -1141,20 +1142,33 @@ void GamePet::finishShakeGame(bool completed)
 
 void GamePet::updateShakeGame(float dt)
 {
+    shakeRefractory = fmaxf(0.0f, shakeRefractory - dt);
+    accelMute = fmaxf(0.0f, accelMute - dt);
+    shakeIdle += dt;
+    shakeSampleSec += dt;
+    if (shakeIdle > 20.0f) {
+        finishShakeGame(false);
+        return;
+    }
+    // Compare three-axis samples over a fixed window, not the magnitude of
+    // gravity. Left/right strokes can have identical magnitudes. The window
+    // also keeps sensitivity consistent between 60Hz Arduino and 20Hz IDF IMU.
+    if (shakeSampleSec < 0.05f) return;
+    shakeSampleSec = 0.0f;
     float a[3];
     input::readRawAccel(a);
-    const float mag = sqrtf(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+    float deltaSquared = 0.0f;
+    for (int i = 0; i < 3; ++i) {
+        const float d = a[i] - accelPrev[i];
+        deltaSquared += d * d;
+        accelPrev[i] = a[i];
+    }
 
-    if (shakeRefractory > 0.0f) shakeRefractory -= dt;
-    if (accelMute > 0.0f) accelMute -= dt;
-
-    const float delta = fabsf(mag - accelPrevMag);
-    accelPrevMag = mag;
-
-    if (accelMute <= 0.0f && shakeRefractory <= 0.0f && delta > 0.9f) {
+    if (accelMute <= 0.0f && shakeRefractory <= 0.0f && deltaSquared > 0.22f * 0.22f) {
         shakeRefractory = 0.18f;
         if (dirt > 0) {
             dirt--;
+            Serial.printf("[mon] scrub: %u left\n", (unsigned)dirt);
             say(dirt ? "keep going!" : "done!");
             if (dirt == 0) {
                 finishShakeGame(true);
@@ -1162,9 +1176,6 @@ void GamePet::updateShakeGame(float dt)
             }
         }
     }
-
-    shakeIdle += dt;
-    if (shakeIdle > 20.0f) finishShakeGame(false);
 }
 
 void GamePet::menuSlot(int i, float *sx, float *sy) const

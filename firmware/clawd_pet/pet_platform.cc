@@ -102,8 +102,14 @@ void clawd::PollInput() {
     if(uint32_t(now-last_imu)>=50) {
         last_imu=now;
         uint8_t a[6];
-        if (imuReady && readReg(imu, 0x35, a, sizeof(a)))
+        if (imuReady && readReg(imu, 0x35, a, sizeof(a))) {
             for (int i=0;i<3;++i) accel[i]=int16_t(a[i*2]|(a[i*2+1]<<8))*(4.0f/32768);
+            static bool reported = false;
+            if (!reported) {
+                ESP_LOGI("pet", "QMI8658 first sample: x=%.3fg y=%.3fg z=%.3fg", accel[0], accel[1], accel[2]);
+                reported = true;
+            }
+        }
     }
 }
 

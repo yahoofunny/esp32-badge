@@ -19,9 +19,10 @@ namespace input {
 static bool down=false, released=false;
 static int x=0,y=0;
 static unsigned long held=0;
+static float accel[3]={0.0f,0.0f,1.0f};
 bool touchDown(){return down;} bool tapped(){return released;}
 int tapX(){return x;} int tapY(){return y;} unsigned long touchHeldMs(){return held;}
-void readRawAccel(float a[3]){a[0]=a[1]=0;a[2]=1;}
+void readRawAccel(float a[3]){memcpy(a,accel,sizeof(accel));}
 }
 static void touchFrame(GamePet& pet,bool down,bool released,int x,int y,unsigned long held=0) {
     input::down=down;input::released=released;input::x=x;input::y=y;input::held=held;
@@ -107,6 +108,152 @@ static void interactionFeedbackChecks() {
     assert(pet.S.hunger==70 && pet.S.feedCount==6 && pet.has(GamePet::MF_ASLEEP));
     assert(pet.lastTapped==-1 && Preferences::blobs.at("clawdpet2/blob")==saveBefore);
     puts("PASS: press highlight without action, one feed on release, 150 ms feedback, no repeated feed, disabled asleep button");
+}
+static void accelFrame(GamePet& pet,float x,float y,float z,float dt=.06f) {
+    input::accel[0]=x;input::accel[1]=y;input::accel[2]=z;
+    pet.update(dt);
+}
+static void beginScrub(GamePet& pet,float x=0,float y=0,float z=1) {
+    Preferences::blobs.clear();
+    input::down=input::released=false;input::held=0;
+    input::accel[0]=x;input::accel[1]=y;input::accel[2]=z;
+    pet.enter();
+    pet.S.stage=mon::STAGE_CHILD;pet.S.form=mon::FORM_LEAF;
+    pet.S.hunger=70;pet.S.happiness=40;pet.S.energy=70;
+    pet.S.cleanliness=40;pet.S.health=80;pet.S.flags=0;
+    pet.save();
+    float sx,sy;pet.menuSlot(mon::ACT_SCRUB,&sx,&sy);
+    const int tx=int(std::lround(sx)),ty=int(std::lround(sy));
+    assert(pet.menuHit(tx,ty)==mon::ACT_SCRUB);
+    touchFrame(pet,true,false,tx,ty);
+    assert(pet.mode==GamePet::MODE_MON);
+    touchFrame(pet,false,true,tx,ty);
+    assert(pet.mode==GamePet::MODE_SHAKE && pet.dirt==5);
+    // The release that entered SCRUB must not also cancel it on the next scan.
+    pet.update(0);
+    assert(pet.mode==GamePet::MODE_SHAKE && pet.dirt==5);
+    for(int i=0;i<6;++i)accelFrame(pet,x,y,z);
+    assert(pet.mode==GamePet::MODE_SHAKE && pet.dirt==5);
+}
+static void assertCareSaved(const GamePet& pet) {
+    GamePet restored;restored.enter();
+    assert(std::fabs(restored.S.cleanliness-pet.S.cleanliness)<.001f);
+    assert(std::fabs(restored.S.happiness-pet.S.happiness)<.001f);
+}
+static void naturalShakeChecks() {
+    constexpr double pi=3.14159265358979323846;
+    for(const int uiHz:{20,60}) {
+        for(int axis=0;axis<3;++axis) {
+            GamePet pet;beginScrub(pet);
+            float sample[3]={0,0,1};
+            double nextSample=.05;
+            int frame=0;
+            // The sensor publishes at 20 Hz; the faster UI only reads its cache.
+            // A normal 2 Hz hand motion changes gradually, unlike square pulses.
+            for(frame=1;frame<=uiHz*6 && pet.mode==GamePet::MODE_SHAKE;++frame) {
+                const double now=double(frame)/uiHz;
+                while(nextSample<=now+1e-7) {
+                    sample[axis]=(axis==2?1.0f:0.0f)+
+                        .45f*float(std::sin(4*pi*nextSample));
+                    nextSample+=.05;
+                }
+                accelFrame(pet,sample[0],sample[1],sample[2],1.0f/uiHz);
+            }
+            assert(pet.mode==GamePet::MODE_MON && pet.dirt==0);
+            assert(pet.S.cleanliness>90 && pet.S.happiness>49);
+            printf("Natural SCRUB: axis %d, %d Hz UI / 20 Hz IMU, completed in %.2f s\n",
+                axis,uiHz,double(frame-1)/uiHz);
+        }
+
+        GamePet slowTilt;beginScrub(slowTilt);
+        float sample[3]={0,0,1};
+        double nextSample=.05;
+        for(int frame=1;frame<=uiHz*6;++frame) {
+            const double now=double(frame)/uiHz;
+            while(nextSample<=now+1e-7) {
+                const double angle=nextSample*pi/6; // 30 degrees per second.
+                sample[0]=float(std::sin(angle));sample[2]=float(std::cos(angle));
+                nextSample+=.05;
+            }
+            accelFrame(slowTilt,sample[0],sample[1],sample[2],1.0f/uiHz);
+            assert(slowTilt.mode==GamePet::MODE_SHAKE && slowTilt.dirt==5);
+        }
+    }
+}
+static void scrubChecks() {
+    // Starting sideways must establish the current gravity vector as baseline.
+    GamePet sideways;beginScrub(sideways,1,0,0);
+    for(int i=0;i<12;++i)
+        accelFrame(sideways,1+(i%2?.01f:-.01f),.01f,-.01f);
+    assert(sideways.dirt==5);
+    // A slow tilt changes direction without the acceleration of a shake.
+    for(int i=1;i<=30;++i) {
+        const float angle=i*.04f;
+        accelFrame(sideways,std::cos(angle),0,std::sin(angle));
+        assert(sideways.dirt==5);
+    }
+    tap(sideways,180,180);
+    assert(sideways.mode==GamePet::MODE_MON);
+
+    GamePet pet;beginScrub(pet);
+    accelFrame(pet,.45f,0,1);assert(pet.dirt==4);
+    // Cached IMU values may be read by several faster UI scans, never as new shakes.
+    for(int i=0;i<15;++i) {
+        accelFrame(pet,.45f,0,1,.02f);
+        assert(pet.dirt==4);
+    }
+    // These two samples have equal magnitudes; their direction change must count.
+    accelFrame(pet,-.45f,0,1);assert(pet.dirt==3);
+    accelFrame(pet,.45f,0,1);assert(pet.dirt==3); // Within the 180 ms cooldown.
+    accelFrame(pet,-.45f,0,1);assert(pet.dirt==3);
+    for(int i=0;i<4;++i)accelFrame(pet,-.45f,0,1);
+    assert(pet.dirt==3);
+    accelFrame(pet,.45f,0,1);assert(pet.dirt==2);
+    for(int i=0;i<4;++i)accelFrame(pet,.45f,0,1);
+    accelFrame(pet,-.45f,0,1);assert(pet.dirt==1);
+    for(int i=0;i<4;++i)accelFrame(pet,-.45f,0,1);
+    // Let the same ordinary care clock advance without completing a bath, so the
+    // reward assertion stays exact even when this final frame crosses a second.
+    GamePet ordinary=pet;ordinary.setVoice(GamePet::Voice::Listening);
+    ordinary.update(.06f);
+    accelFrame(pet,.45f,0,1);
+    assert(pet.mode==GamePet::MODE_MON && pet.dirt==0);
+    assert(std::fabs(pet.S.cleanliness-(ordinary.S.cleanliness+55))<.001f);
+    assert(std::fabs(pet.S.happiness-(ordinary.S.happiness+10))<.001f);
+    assertCareSaved(pet);
+
+    GamePet cancelled;beginScrub(cancelled);
+    accelFrame(cancelled,.45f,0,1);
+    for(int i=0;i<4;++i)accelFrame(cancelled,.45f,0,1);
+    accelFrame(cancelled,-.45f,0,1);assert(cancelled.dirt==3);
+    const float cleanBeforeCancel=cancelled.S.cleanliness;
+    const float happyBeforeCancel=cancelled.S.happiness;
+    tap(cancelled,180,180);
+    assert(cancelled.mode==GamePet::MODE_MON && cancelled.dirt==0);
+    assert(std::fabs(cancelled.S.cleanliness-(cleanBeforeCancel+22))<.001f);
+    assert(cancelled.S.happiness==happyBeforeCancel);
+    assertCareSaved(cancelled);
+
+    GamePet timedOut;beginScrub(timedOut);
+    accelFrame(timedOut,.45f,0,1);assert(timedOut.dirt==4);
+    ordinary=timedOut;ordinary.setVoice(GamePet::Voice::Listening);
+    ordinary.update(20.1f);
+    accelFrame(timedOut,.45f,0,1,20.1f);
+    assert(timedOut.mode==GamePet::MODE_MON && timedOut.dirt==0);
+    assert(std::fabs(timedOut.S.cleanliness-(ordinary.S.cleanliness+11))<.001f);
+    assert(std::fabs(timedOut.S.happiness-ordinary.S.happiness)<.001f);
+    assertCareSaved(timedOut);
+
+    GamePet speaking;beginScrub(speaking);
+    speaking.setVoice(GamePet::Voice::Speaking);
+    for(int i=0;i<12;++i)accelFrame(speaking,i%2?.45f:-.45f,0,1);
+    tap(speaking,180,180);
+    assert(speaking.mode==GamePet::MODE_SHAKE && speaking.dirt==5);
+    speaking.setVoice(GamePet::Voice::Idle);
+    tap(speaking,180,180);assert(speaking.mode==GamePet::MODE_MON);
+    naturalShakeChecks();
+    input::accel[0]=input::accel[1]=0;input::accel[2]=1;
+    puts("PASS: SCRUB entry, gravity baseline, noise/tilt rejection, equal-magnitude shakes, cached samples, cooldown, complete/partial saved rewards, voice gating");
 }
 static void wardrobeChecks() {
     // Wardrobe preferences must not change either legacy care-save structure.
@@ -284,5 +431,6 @@ int main(){
     wardrobeChecks();
     careAccessoryPreviews();
     interactionFeedbackChecks();
+    scrubChecks();
     puts("PASS: egg hatch, both legacy migrations, canonical save priority, corruption, voice presentation");
 }

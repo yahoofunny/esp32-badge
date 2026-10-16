@@ -300,6 +300,9 @@ same care and drawing source runs in the Arduino launcher and the ESP-IDF voice
 companion. When no current save exists, migration prefers the old PIXEL MON save,
 then the original pet save. Old saves are retained; new progress uses `clawdpet2/blob`.
 
+点击 **SCRUB** 后轻轻来回摇动设备，清除 5 处污点；完成增加 55 点清洁度。
+摇晃识别使用三轴变化，支持横向、纵向摇动；点击屏幕可结束，20 秒后自动退出并保留已完成部分的清洁度。
+
 The optional integrated voice version uses XiaoZhi's open client with this board's
 existing hardware support. The on-screen creature listens, responds with expressions
 and subtitles, and exposes its current needs through a read-only MCP tool.
