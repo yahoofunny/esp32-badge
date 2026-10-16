@@ -22,6 +22,7 @@ int tx = 0, ty = 0;
 uint32_t heldSince = 0;
 float accel[3] = {0, 0, 1};
 bool imuReady = false;
+uint32_t imuEnabledAt = 0;
 uint32_t nowMs() { return uint32_t(esp_timer_get_time() / 1000); }
 bool readReg(i2c_master_dev_handle_t dev, uint8_t reg, uint8_t *data, size_t n) {
     // IDF runs at 100Hz here: an 8ms timeout rounds down to zero ticks and
@@ -54,17 +55,19 @@ void clawd::BeginPlatform(i2c_master_bus_handle_t bus) {
     // Like SensorLib, reset the IMU before checking WHOAMI. The launcher may have
     // left it sampling with a different configuration across the firmware reboot.
     writeReg(imu, 0x60, 0xb0);
+    vTaskDelay(pdMS_TO_TICKS(20));
     uint8_t id = 0, reset = 0;
     for (int i=0; i<25; ++i) {
         vTaskDelay(pdMS_TO_TICKS(10));
         if (readReg(imu, 0x4d, &reset, 1) && reset == 0x80) break;
     }
-    if (readReg(imu, 0, &id, 1) && id == 5) {
-        writeReg(imu, 0x02, 0x40); // little-endian, register auto-increment
-        writeReg(imu, 0x08, 0);    // disable while configuring
-        writeReg(imu, 0x03, 0x15); // CTRL2: +/-4g, 250Hz
-        writeReg(imu, 0x06, 0x07); // accelerometer low-pass filter, mode 3
-        imuReady = writeReg(imu, 0x08, 1); // accelerometer only
+    if (reset == 0x80 && readReg(imu, 0, &id, 1) && id == 5) {
+        // Waveshare's IDF QMI8658 example: normal 6DOF, 8g accelerometer.
+        imuReady = writeReg(imu, 0x02, 0x60) &&
+            writeReg(imu, 0x03, 0x23) &&
+            writeReg(imu, 0x04, 0x43) &&
+            writeReg(imu, 0x08, 0x03);
+        imuEnabledAt = nowMs();
         ESP_LOGI("pet", "QMI8658 id=0x%02x reset=0x%02x ready=%d", id, reset, imuReady);
     } else { ESP_LOGW("pet", "QMI8658 unavailable: id=0x%02x reset=0x%02x", id, reset); }
     setenv("TZ", "CST-8", 1); tzset();
@@ -103,10 +106,16 @@ void clawd::PollInput() {
         last_imu=now;
         uint8_t a[6];
         if (imuReady && readReg(imu, 0x35, a, sizeof(a))) {
-            for (int i=0;i<3;++i) accel[i]=int16_t(a[i*2]|(a[i*2+1]<<8))*(4.0f/32768);
+            for (int i=0;i<3;++i) accel[i]=int16_t(a[i*2]|(a[i*2+1]<<8))*(8.0f/32768);
             static bool reported = false;
-            if (!reported) {
-                ESP_LOGI("pet", "QMI8658 first sample: x=%.3fg y=%.3fg z=%.3fg", accel[0], accel[1], accel[2]);
+            // A successful I2C read immediately after enabling can still contain
+            // the reset value. Diagnose after the sensor's startup has settled.
+            if (!reported && uint32_t(now-imuEnabledAt)>=1000) {
+                uint8_t ctrl[8] = {}, status = 0;
+                readReg(imu, 0x02, ctrl, sizeof(ctrl));
+                readReg(imu, 0x2e, &status, 1);
+                ESP_LOGI("pet", "QMI8658 sample: x=%.3fg y=%.3fg z=%.3fg ctrl=%02x/%02x/%02x/%02x/%02x status=%02x",
+                    accel[0], accel[1], accel[2], ctrl[0], ctrl[1], ctrl[4], ctrl[6], ctrl[7], status);
                 reported = true;
             }
         }

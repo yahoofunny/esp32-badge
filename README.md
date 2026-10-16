@@ -302,6 +302,7 @@ then the original pet save. Old saves are retained; new progress uses `clawdpet2
 
 点击 **SCRUB** 后轻轻来回摇动设备，清除 5 处污点；完成增加 55 点清洁度。
 摇晃识别使用三轴变化，支持横向、纵向摇动；点击屏幕可结束，20 秒后自动退出并保留已完成部分的清洁度。
+语音桌宠沿用 [Waveshare 官方 QMI8658 驱动](https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.85B/blob/main/Examples/ESP-IDF-V5.5.3/06_qmi8658_test/components/waveshare__qmi8658/qmi8658.c) 的 6DOF / 8g 配置，主机仍每 50ms 采样一次，避免原先仅加速度配置下持续读到零的情况。
 
 The optional integrated voice version uses XiaoZhi's open client with this board's
 existing hardware support. The on-screen creature listens, responds with expressions
