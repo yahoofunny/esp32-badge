@@ -134,6 +134,7 @@ system/
 ├── game_clawd.{h,cpp}    tilt-controlled rolling clawd
 ├── game_tap.{h,cpp}      touch-controlled clawd tap
 ├── game_pet.{h,cpp}      the tamagotchi: needs, growth, poking, the scrub game
+├── game_mon.{h,cpp}      the pocket mon: the egg, the two tracks, the evolution tree
 ├── game_settings.{h,cpp} volume, and what is under the hood
 ├── power.{h,cpp}         the BQ27220 fuel gauge
 ├── clawd_sprite.h        the sprite + palette, shared by both games
@@ -173,6 +174,7 @@ bottom corner fills while you hold, so the gesture is discoverable.
 ./tools/deploy_game.sh games/clawd-roll   # or deploy the standalone game sketch
 python tools/make_font.py              # regenerate the bitmap font
 python tools/make_pet_sprites.py       # regenerate the pet's bodies
+python tools/make_mon_sprites.py       # regenerate the mon's seven forms
 python tools/make_icon_sprites.py      # regenerate the three launcher icons
 python tools/make_icon.py              # regenerate the project icon
 
@@ -244,6 +246,58 @@ somewhere else on the screen, and he drifts back when you let go. **SCRUB** star
 mini-game: hold the badge and shake it to work the dirt off, against a five-blob
 meter and a clock. The accelerometer is muted for a moment after every touch, because
 tapping the panel spikes it hard enough to read as a shake.
+
+### pixel-mon
+
+A pocket mon: an egg, and a branching evolution tree that decides what hatches from it
+turns into. The care model is the pet's — four needs, derived health, self-correcting
+sickness — because that part is already right. What this app is for is the two things a
+Tamagotchi has and a pet did not need:
+
+**The egg.** The first screen is an egg, drawn rather than a sprite. It hatches while it
+is *warm*, which means energy and cleanliness both above 40, so the needs are
+load-bearing before there is anything to look after: about three minutes of a warm egg,
+plus four points a poke. Tapping it makes it wobble; something taps back. Until it
+hatches the only live menu items are PET and NAME.
+
+**The tree.** Two tracks accumulate in the background, from the *state* of the needs
+rather than from one button pressed at the right moment:
+
+| track | fed by |
+|---|---|
+| joy | happiness, plus playing, petting, being poked |
+| vigor | energy and cleanliness, plus sleeping and finishing a scrub |
+
+Evolution then needs both an age and care points — one point per minute spent with the
+four needs averaging above 70 — and the gates are short on purpose: a badge is picked up
+for ten minutes at a time, so a tree that needs an hour of good care is a tree that never
+gets climbed.
+
+| | gate | outcome |
+|---|---|---|
+| EGG → BABY | hatch reaches 100% | **PIP** |
+| BABY → CHILD | 5 min, care 6 | whichever track leads: **LEAF** (joy) or **AQUA** (vigor) |
+| CHILD → ADULT | 20 min, care 25 | **BLOOM** / **TIDE** along the bloodline, **SOLAR** if the two tracks end level, **DUSK** if the average care of that stage fell below 45 |
+
+The announcement names the branch and the reason — `PIP is now BLOOM (joy)` — and the
+serial line prints joy, vigor and the care average, so a surprising result can be checked
+rather than argued with.
+
+**Sleep is the only thing that restores energy**, at nine points a minute, and the mon
+wakes itself when it is full. That is a deliberate cost: resting is one of the two ways
+into the vigor branch, and while it sleeps the other four actions are blocked.
+
+**The dex.** The bottom line reads `GROW 3/6  SEEN 2/7` — the first half names whichever
+condition is actually holding evolution up, and switches to `AGE 4m` once care is done and
+only the clock is left. `SEEN` is a bitmask that survives a new egg, which is the point of
+the last menu slot: once the mon is an adult it stops saying NAME and says EGG, and
+starting over is how the other five forms get found.
+
+The forms are clawd's silhouette at one size per stage with the form's colour and a
+one-pixel outline, plus a mark the firmware draws on the head — a leaf, a drop, a flower,
+a crest, a halo, two dim puffs. `tools/make_mon_sprites.py` regenerates the bitmaps; the
+marks are code, because at this size a mark is three shapes and a bitmap is another
+1.5 KB per form.
 
 ## Coexistence: our launcher and the XiaoZhi assistant
 

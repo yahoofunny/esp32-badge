@@ -30,6 +30,7 @@
 #include "esp_random.h"
 #include "game.h"
 #include "game_clawd.h"
+#include "game_mon.h"
 #include "game_pet.h"
 #include "game_photos.h"
 #include "game_settings.h"
@@ -51,11 +52,13 @@
 static GameClawd   g_clawd;
 static GameTap     g_tap;
 static GamePet     g_pet;
+static GameMon     g_mon;
 static GameXiaoZhi g_xiaozhi;
 static GameSettings g_settings;
 static GamePhotos   g_photos;
 
-static Game *const GAMES[] = { &g_clawd, &g_tap, &g_pet, &g_photos, &g_xiaozhi, &g_settings };
+static Game *const GAMES[] = { &g_clawd, &g_tap, &g_pet, &g_mon, &g_photos,
+                               &g_xiaozhi, &g_settings };
 static const int   GAME_COUNT = (int)(sizeof(GAMES) / sizeof(GAMES[0]));
 
 // ----------------------------------------------------------------- screens ---
