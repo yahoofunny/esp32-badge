@@ -40,7 +40,7 @@ def main():
     for name in ("pet_display.h", "pet_display.cc", "pet_platform.h", "pet_platform.cc", "pet_ui_pacing.h"):
         shutil.copy2(overlay / name, target / name)
     for name in ("game.h", "game_pet.h", "game_pet.cpp", "gfx.h", "gfx.cpp", "input.h",
-                 "clock.h", "sound.h", "assets_font.h", "assets_mon.h",
+                 "clock.h", "sound.h", "assets_font.h", "assets_mon.h", "assets_icons.h",
                  "outfits.h", "outfits.cpp"):
         shutil.copy2(ROOT / "system" / name, target / name)
 

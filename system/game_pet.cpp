@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "assets_mon.h"
+#include "assets_icons.h"
 #include "clock.h"
 #include "esp_random.h"
 #include "gfx.h"
@@ -826,13 +827,9 @@ void GamePet::act(int a)
 // ------------------------------------------------------------------ drawing ----
 void GamePet::drawIcon(float cx, float cy, float size) const
 {
-    // The adult form rather than the egg: the icon has to say "creature", and an egg
-    // looks like every other round thing on the ring.
-    const mon_form_t &f = formOf(FORM_TIDE);
-    gfx::Sprite s;
-    s.bits = f.bits; s.w = f.w; s.h = f.h; s.rowBytes = f.rowBytes;
-    const uint16_t pal[4] = { 0, PX(f.body), PX(f.edge), PX(f.ink) };
-    gfx::drawSpriteSized(s, cx, cy + size * 0.06f, 0.0f, size, pal);
+    // Keep the launcher identity as classic orange Clawd, independent of the
+    // living pet's current evolution form and its colour.
+    gfx::drawSpriteSized(icon_pet, cx, cy + size * 0.06f, 0.0f, size, icon_pet_palette);
 }
 
 static int wrapThought(const char *s, char out[][24], int maxLines, int cols)

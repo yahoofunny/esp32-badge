@@ -214,6 +214,8 @@ system/
 
 The five launcher entries are CLAWD ROLL, CLAWD TAP, CLAWD PET, PHOTOS and SETTINGS.
 Each module draws its own icon; the pet has one entry for both care and voice.
+CLAWD PET keeps its classic orange launcher icon; inside the app, the creature's
+body color continues to follow its current evolution form.
 
 The battery sits in the top right, read from the BQ27220 gauge on the I2C bus rather
 than guessed from an ADC pin: it reports a state of charge and a pack voltage, and it
