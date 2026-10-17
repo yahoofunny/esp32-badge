@@ -420,12 +420,24 @@ void loop()
 
     if (screen == SCREEN_LAUNCHER) {
         Game *picked = launcher::update(dt);
-        launcher::render();
-        if (picked) {
-            openPicked(picked);
-            // A folder switch changes the registry immediately. Paint its ring
-            // before sending the current framebuffer to the panel.
-            if (screen == SCREEN_LAUNCHER) launcher::render();
+        // An idle launcher asks for a frame only now and then. When it does not, nothing
+        // is drawn and the empty band below sends nothing: the panel keeps the frame it
+        // already has, which is the same picture.
+        // The BOOT hold ring is drawn by the loop, not the launcher, so a held button
+        // needs a real frame even when the carousel is settled.
+        if (picked || input::bootHeldMs() > 0 || launcher::wantsFrame()) {
+            launcher::render();
+            if (picked) {
+                openPicked(picked);
+                // A folder switch changes the registry immediately. Paint its ring
+                // before sending the current framebuffer to the panel.
+                if (screen == SCREEN_LAUNCHER) launcher::render();
+            }
+            bandY0 = 0;
+            bandY1 = SCR_H - 1;
+        } else {
+            bandY0 = 1;
+            bandY1 = 0;        // empty: LCD_pushBand sends nothing for y0 > that
         }
     } else {
         active->update(dt);

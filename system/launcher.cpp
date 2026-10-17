@@ -1,5 +1,6 @@
 #include "launcher.h"
 
+#include <Arduino.h>
 #include <math.h>
 #include <string.h>
 
@@ -245,6 +246,20 @@ Game *update(float dt)
 // --------------------------------------------------------------- drawing -----
 static void drawBackdrop()
 {
+    // The orbit never changes. Keep its geometry, rather than evaluating 194
+    // trigonometric functions on every frame. No full-screen image is needed.
+    static constexpr int SEG = 96;
+    struct Track {
+        float x[SEG + 1], y[SEG + 1];
+        Track() {
+            for (int i = 0; i <= SEG; ++i) {
+                const float a = (float)i / SEG * 2.0f * PI_F;
+                x[i] = SCR_CX + ORBIT_X * cosf(a);
+                y[i] = SCR_CY + ORBIT_Y * sinf(a);
+            }
+        }
+    };
+    static const Track track;
     gfx::clear(COL_BG);
 
     // Sparse floor dots, same lattice as the games, so the system feels of a piece.
@@ -256,23 +271,47 @@ static void drawBackdrop()
 
     // The track the icons ride on, drawn as short segments between sampled points
     // so it follows the ellipse rather than approximating it with a circle.
-    const int SEG = 96;
-    float px = 0, py = 0;
-    for (int i = 0; i <= SEG; i++) {
-        const float a = (float)i / SEG * 2.0f * PI_F;
-        const float x = SCR_CX + ORBIT_X * cosf(a);
-        const float y = SCR_CY + ORBIT_Y * sinf(a);
-        if (i) gfx::line(px, py, x, y, COL_TRACK);
-        px = x;
-        py = y;
+    for (int i = 1; i <= SEG; ++i)
+        gfx::line(track.x[i-1], track.y[i-1], track.x[i], track.y[i], COL_TRACK);
+}
+
+// Scan only the two narrow edges of each ring, rather than testing every pixel
+// inside its bounding square. Keep the same pixel-centre distance test as gfx,
+// including boundary pixels; the one-pixel margins cover sqrt rounding.
+static void strokeRing(float cx, float cy, float r, float thickness, uint16_t color)
+{
+    const float inner = r - thickness * 0.5f, outer = r + thickness * 0.5f;
+    const float in2 = inner > 0 ? inner * inner : 0, out2 = outer * outer;
+    const int y0 = (int)fmaxf(0, floorf(cy - outer));
+    const int y1 = (int)fminf(SCR_H - 1, ceilf(cy + outer));
+    for (int y = y0; y <= y1; ++y) {
+        const float dy = (y + 0.5f) - cy, dy2 = dy * dy;
+        if (dy2 > out2) continue;
+        const float edge = sqrtf(out2 - dy2);
+        const int x0 = (int)fmaxf(0, floorf(cx - edge - 0.5f) - 1);
+        const int x1 = (int)fminf(SCR_W - 1, ceilf(cx + edge - 0.5f) + 1);
+        if (x1 < x0) continue;
+        int leftEnd = x1, rightStart = x1 + 1;
+        if (dy2 < in2) {
+            const float hole = sqrtf(in2 - dy2);
+            leftEnd = (int)fminf(x1, floorf(cx - hole - 0.5f) + 1);
+            rightStart = (int)fmaxf(x0, fmaxf(leftEnd + 1, ceilf(cx + hole - 0.5f) - 1));
+        }
+        auto paint = [&](int start, int end) {
+            uint16_t *row = fb + (size_t)y * SCR_W;
+            for (int x = start; x <= end; ++x) {
+                const float dx = (x + 0.5f) - cx;
+                const float d2 = dx * dx + dy2;
+                if (d2 <= out2 && d2 >= in2) row[x] = color;
+            }
+        };
+        paint(x0, leftEnd);
+        paint(rightStart, x1);
     }
 }
 
-static void drawIconAt(int i, float scaleBoost)
+static void drawIconAt(int i, float cx, float cy, float scaleBoost)
 {
-    float cx, cy;
-    iconCentre(i, &cx, &cy);
-
     const float t = frontness(cy);
     const float base = ICON_MIN + (ICON_MAX - ICON_MIN) * t;
     const float size = base * scaleBoost;
@@ -281,18 +320,35 @@ static void drawIconAt(int i, float scaleBoost)
     // the touch target, which the hit test above matches.
     const uint16_t accent = g_games[i]->accent();
     gfx::fillCircle(cx, cy, size * 0.5f, gfx::dim(accent, 0.72f - 0.42f * t));
-    gfx::strokeCircle(cx, cy, size * 0.5f, 2.0f, gfx::mix(COL_BG, accent, 0.35f + 0.65f * t));
+    strokeRing(cx, cy, size * 0.5f, 2.0f, gfx::mix(COL_BG, accent, 0.35f + 0.65f * t));
 
     g_games[i]->drawIcon(cx, cy, size * 0.56f);
 
     if (i == selIndex() && launching < 0) {
         // Breathing ring marks the selection without adding any text.
         const float pulse = 0.5f + 0.5f * sinf(age * 3.2f);
-        gfx::strokeCircle(cx, cy, size * 0.5f + 3.0f + pulse * 1.5f, 2.0f,
+        strokeRing(cx, cy, size * 0.5f + 3.0f + pulse * 1.5f, 2.0f,
                           gfx::mix(accent, PX(RGB565(0xFF, 0xFF, 0xFF)), 0.35f));
     }
 }
 
+
+bool wantsFrame()
+{
+    if (g_count <= 0) return true;
+    if (launching >= 0) return true;
+    if (touchTracking || touchDragging) return true;
+    if (fabsf((float)sel - selPos) > 0.001f) return true;   // still easing
+    // Idle. Interval-based rather than every Nth frame: the loop's own rate rises as soon
+    // as frames stop being pushed, so a frame counter silently becomes a different
+    // refresh rate (it measured 20 Hz instead of 9 for exactly that reason). 15 Hz is
+    // enough samples for a glow that takes two seconds to breathe.
+    static uint32_t last = 0;
+    const uint32_t now = millis();
+    if (now - last < 66) return false;
+    last = now;
+    return true;
+}
 
 void render()
 {
@@ -302,14 +358,19 @@ void render()
 
     // Painter's order: back of the ring first, so the front entries overlap them.
     int order[16];
+    float cx[16], cy[16];
     int n = g_count > 16 ? 16 : g_count;
-    for (int i = 0; i < n; i++) order[i] = i;
+    // Every icon has one position this frame; sorting and painting share it.
+    // Recomputing both centres for each comparison was quadratic trig work.
+    for (int i = 0; i < n; i++) {
+        order[i] = i;
+        iconCentre(i, &cx[i], &cy[i]);
+    }
     for (int a = 0; a < n - 1; a++) {
         for (int b = a + 1; b < n; b++) {
-            float ax, ay, bx, by;
-            iconCentre(order[a], &ax, &ay);
-            iconCentre(order[b], &bx, &by);
-            if (by < ay) { const int tmp = order[a]; order[a] = order[b]; order[b] = tmp; }
+            if (cy[order[b]] < cy[order[a]]) {
+                const int tmp = order[a]; order[a] = order[b]; order[b] = tmp;
+            }
         }
     }
 
@@ -318,7 +379,7 @@ void render()
 
     for (int k = 0; k < n; k++) {
         const int i = order[k];
-        drawIconAt(i, (i == launching) ? selBoost : 1.0f);
+        drawIconAt(i, cx[i], cy[i], (i == launching) ? selBoost : 1.0f);
     }
 
     // Keep the orbit as the focus: selected name and a quiet gesture hint only.

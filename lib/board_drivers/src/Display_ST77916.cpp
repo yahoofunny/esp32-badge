@@ -452,7 +452,11 @@ esp_lcd_panel_handle_t panel_handle = NULL;
  */
 volatile uint32_t lcd_trans_done_count = 0;
 static SemaphoreHandle_t lcd_trans_signal = NULL;
-static constexpr int LCD_DMA_ROWS = 8;
+// At the bus limit of 40 rows. Each strip costs a fixed transaction overhead, so
+// fewer, larger strips is what makes a full frame cheap: 45 -> 12 -> 9 transfers.
+static constexpr int LCD_DMA_ROWS = 40;
+static_assert(EXAMPLE_LCD_WIDTH * LCD_DMA_ROWS * sizeof(uint16_t) <=
+              ESP_PANEL_HOST_SPI_MAX_TRANSFER_SIZE, "LCD DMA strip exceeds bus limit");
 static uint16_t *lcd_dma_strip = NULL;
 static uint32_t lcd_pending_target = 0;
 static bool lcd_pending = false;

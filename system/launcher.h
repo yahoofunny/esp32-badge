@@ -54,4 +54,11 @@ Game *update(float dt);
 
 void render();
 
+// Does the picture need repainting this frame? Everything on this screen is static
+// except the breathing ring around the selected entry, so once the carousel has settled
+// and nothing is being touched the caller can paint and send far less often. Anything
+// that actually changes the picture -- a drag, a lean, a launch, the BOOT hold ring --
+// asks for every frame.
+bool wantsFrame();
+
 }  // namespace launcher
