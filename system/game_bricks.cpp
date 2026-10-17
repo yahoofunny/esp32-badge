@@ -10,8 +10,8 @@ static const uint16_t COL_DIM=PX(RGB565(0xA7,0xA2,0xB0));
 static const uint16_t COL_BALL=PX(RGB565(0xA4,0xDD,0xD0));
 static const float BALL_R=5,PADDLE_Y=280,PADDLE_HALF=30;
 static int bricksControl(int x,int y){
-    for(int i=0;i<3;++i){const int dx=x-(110+i*70),dy=y-316;if(dx*dx+dy*dy<=28*28)return i;}
-    return -1;
+    if(y>=298&&x>=104&&x<=256)return 1;
+    return x<180?0:2;
 }
 static bool bricksStart(int x,int y){return x>=128&&x<=232&&y>=224&&y<=267;}
 static bool circleBox(float x,float y,float left,float top,float width,float height){
@@ -24,7 +24,7 @@ void GameBricks::reset(){
     vx=78;vy=-140;redraw=true;
 }
 void GameBricks::enter(){
-    reset();mode=READY;resumeMode=PLAYING;tracking=moved=painted=false;lastFrame=0;pressed=startTarget=-1;held=0;
+    reset();mode=READY;resumeMode=PLAYING;tracking=moved=painted=controlSeen=false;lastFrame=lastControlMs=0;pressed=startTarget=-1;held=0;
 }
 void GameBricks::serve(){
     ballX=paddle;ballY=PADDLE_Y-BALL_R-1;
@@ -73,13 +73,24 @@ void GameBricks::update(float dt){
         if(!tracking){
             tracking=true;startX=x;startY=y;moved=false;held=0;startTarget=bricksControl(x,y);
             if((mode==PLAYING||mode==SERVING)&&(startTarget==0||startTarget==2))movePaddle(startTarget==0?-18:18);
+            if(startTarget==1&&(mode==PLAYING||mode==SERVING||mode==PAUSED)&&(!controlSeen||uint32_t(millis()-lastControlMs)>=220)){
+                if(mode==SERVING)serve();
+                else if(mode==PAUSED)mode=resumeMode;
+                else{resumeMode=mode;mode=PAUSED;}
+                controlSeen=true;lastControlMs=millis();redraw=true;
+            }
         }
-        const int dx=x-startX,dy=y-startY;if(dx*dx+dy*dy>100)moved=true;
+        const int dx=x-startX,dy=y-startY;if(dx*dx+dy*dy>24*24)moved=true;
         pressed=-1;
-        if(!moved){
-            if((mode==PLAYING||mode==SERVING||mode==PAUSED)&&startTarget>=0&&bricksControl(x,y)==startTarget)
-                pressed=mode==PAUSED&&startTarget!=1?-1:startTarget;
-            else if((mode==READY||mode==LOST||mode==WON)&&bricksStart(startX,startY)&&bricksStart(x,y))pressed=3;
+        if(mode==PLAYING||mode==SERVING||mode==PAUSED){
+            const int current=bricksControl(x,y);
+            if(startTarget==1)pressed=1;
+            else if(mode!=PAUSED&&current!=1){
+                if(current!=startTarget){startTarget=current;held=0;movePaddle(current==0?-18:18);}
+                pressed=current;
+            }
+        }else if(!moved&&bricksStart(startX,startY)&&bricksStart(x,y)){
+            pressed=3;
         }
         if((mode==PLAYING||mode==SERVING)&&(pressed==0||pressed==2)){
             const float repeat=fmaxf(0,held+dt-.18f)-fmaxf(0,held-.18f);
@@ -88,12 +99,7 @@ void GameBricks::update(float dt){
     }else{
         if(tracking&&input::tapped()){
             const int x=input::tapX(),y=input::tapY();
-            if(!moved&&startTarget==1&&bricksControl(x,y)==1&&(mode==PLAYING||mode==SERVING||mode==PAUSED)){
-                if(mode==SERVING)serve();
-                else if(mode==PAUSED)mode=resumeMode;
-                else{resumeMode=mode;mode=PAUSED;}
-                redraw=true;
-            }else if(!moved&&(mode==READY||mode==LOST||mode==WON)&&bricksStart(startX,startY)&&bricksStart(x,y)){
+            if(!moved&&(mode==READY||mode==LOST||mode==WON)&&bricksStart(startX,startY)&&bricksStart(x,y)){
                 reset();serve();
             }
         }
@@ -113,7 +119,7 @@ void GameBricks::render(){
     gfx::clear(COL_BG);gfx::textCentered("BRICKS",24,accent(),2);
     char text[32];snprintf(text,sizeof text,"SCORE %03d  BEST %03d",score,best);gfx::textCentered(text,48,COL_DIM);
     for(int i=0;i<3;++i)gfx::fillCircle(170+i*10,68,3,i<lives?COL_BALL:COL_TRACK);
-    gfx::line(66,80,294,80,COL_TRACK);gfx::line(66,80,66,300,COL_TRACK);gfx::line(294,80,294,300,COL_TRACK);
+    gfx::line(66,80,294,80,COL_TRACK);gfx::line(66,80,66,300,pressed==0?accent():COL_TRACK);gfx::line(294,80,294,300,pressed==2?accent():COL_TRACK);
     for(int i=0;i<20;++i)if(bricks[i]){
         const uint16_t colors[]={PX(RGB565(0xED,0xA5,0x85)),PX(RGB565(0xE3,0xC6,0x8B)),PX(RGB565(0xA1,0xC6,0xB2)),PX(RGB565(0xA5,0xB1,0xD5))};
         const int x=72+(i%5)*44,y=100+(i/5)*19;
@@ -124,19 +130,15 @@ void GameBricks::render(){
     if(mode==READY||mode==LOST||mode==WON){
         gfx::fillRect(85,99,190,174,COL_BG);
         gfx::textCentered(mode==READY?"BRICKS":mode==WON?"YOU WIN":"GAME OVER",116,COL_TEXT,2);
-        gfx::textCentered("LEFT / RIGHT BUTTONS",158,COL_DIM);
+        gfx::textCentered("TAP LEFT / RIGHT HALF",158,COL_DIM);
         gfx::textCentered("BREAK ALL 20 BRICKS",180,COL_DIM);
         gfx::textCentered("THREE LIVES",201,COL_DIM);
         gfx::fillRect(128,224,104,40,pressed==3?accent():COL_TRACK);
         gfx::textCentered(mode==READY?"PLAY":"RETRY",237,pressed==3?COL_BG:COL_TEXT,2);
         gfx::textCentered("HOLD BOOT TO EXIT",324,COL_DIM);
     }else{
-        for(int i=0;i<3;++i){
-            const int x=110+i*70;const uint16_t ink=pressed==i?COL_BG:COL_TEXT;
-            gfx::fillCircle(x,316,i==1?22:24,pressed==i?accent():COL_TRACK);
-            if(i==1&&mode==PLAYING){gfx::fillRect(x-6,308,4,16,ink);gfx::fillRect(x+2,308,4,16,ink);}
-            else for(int row=-7;row<=7;++row){const int w=10-abs(row);gfx::fillRect(i==0?x+4-w:x-4,316+row,w,1,ink);}
-        }
+        gfx::fillRect(110,308,140,36,pressed==1?accent():COL_TRACK);
+        gfx::textCentered(mode==PLAYING?"PAUSE":mode==PAUSED?"RESUME":"PLAY",324,pressed==1?COL_BG:COL_TEXT);
         if(mode==PAUSED){gfx::fillRect(100,194,160,36,COL_BG);gfx::textCentered("PAUSED",204,COL_TEXT,2);}
         if(mode==SERVING)gfx::textCentered("TAP PLAY TO SERVE",222,COL_DIM);
     }

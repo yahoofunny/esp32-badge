@@ -37,20 +37,23 @@ def function_source(source, signature):
     return source[start:end]
 
 
-def render_launcher():
+def render_launcher(registry_name='GAMES', selected_class='GamePet', output_stem='launcher'):
     compiler = shutil.which('g++')
     if not compiler:
         raise SystemExit('Native g++ is required')
     generated = ROOT / 'build/readme-render'
     generated.mkdir(parents=True, exist_ok=True)
     sketch = (ROOT / 'system/system.ino').read_text(encoding='utf-8')
-    registry = re.search(r'GAMES\[\]\s*=\s*\{([^}]+)\}', sketch).group(1)
+    registry = re.search(r'\b' + registry_name + r'\[\]\s*=\s*\{([^}]+)\}', sketch).group(1)
     instances = re.findall(r'&(\w+)', registry)
     classes = [re.search(r'static\s+(\w+)\s+' + name + r'\s*;', sketch).group(1)
                for name in instances]
     sources = []
     headers = []
     for cls in classes:
+        if cls in ('GameFolder', 'GameBack'):
+            headers.append(f'#include "{(ROOT / "system/launcher.h").as_posix()}"')
+            continue  # Navigation tile methods are inline in launcher.h.
         stem = re.sub(r'(?<!^)(?=[A-Z])', '_', cls).lower()
         header = ROOT / 'system' / (stem + '.h')
         source = header.with_suffix('.cpp').read_text(encoding='utf-8')
@@ -91,10 +94,10 @@ int main() {
     REGISTRY_INSTANCES
     Game* games[]={REGISTRY_POINTERS};
     launcher::begin(games,sizeof(games)/sizeof(games[0]));
-    // Deterministic fixture: the actual pet entry selected, between gestures.
-    launcher::sel=PET_INDEX;launcher::selPos=PET_INDEX;launcher::update(.25f);
+    // Deterministic fixture: an actual registered entry between gestures.
+    launcher::sel=SELECTED_INDEX;launcher::selPos=SELECTED_INDEX;launcher::update(.25f);
     launcher::render();
-    FILE* f=fopen("build/readme-render/launcher.ppm","wb");if(!f)return 1;
+    FILE* f=fopen("build/readme-render/OUTPUT_STEM.ppm","wb");if(!f)return 1;
     fprintf(f,"P6\n360 360\n255\n");
     for(int y=0;y<SCR_H;++y)for(int x=0;x<SCR_W;++x){
         uint16_t c=PX(fb[y*SCR_W+x]);
@@ -111,17 +114,18 @@ int main() {
     harness = harness.replace('REGISTRY_INSTANCES', '\n'.join(
         f'{cls} {instance};' for cls, instance in zip(classes, instances)))
     harness = harness.replace('REGISTRY_POINTERS', ','.join('&' + x for x in instances))
-    harness = harness.replace('PET_INDEX', str(classes.index('GamePet')))
-    harness_path = generated / 'launcher.cpp'
+    harness = harness.replace('SELECTED_INDEX', str(classes.index(selected_class)))
+    harness = harness.replace('OUTPUT_STEM', output_stem)
+    harness_path = generated / (output_stem + '.cpp')
     harness_path.write_text(harness, encoding='utf-8')
-    binary = generated / ('launcher.exe' if os.name == 'nt' else 'launcher')
+    binary = generated / (output_stem + ('.exe' if os.name == 'nt' else ''))
     env = os.environ.copy()
     env['PATH'] = str(Path(compiler).parent) + os.pathsep + env.get('PATH', '')
     subprocess.run([compiler, '-std=c++17', '-O2', '-static', '-Itests/native',
                     str(harness_path), *sources, 'system/gfx.cpp', '-o', str(binary)],
                    cwd=ROOT, env=env, check=True)
     subprocess.run([str(binary)], cwd=ROOT, env=env, check=True)
-    return generated / 'launcher.ppm'
+    return generated / (output_stem + '.ppm')
 
 
 def main():

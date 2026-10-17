@@ -4,7 +4,7 @@
  *
  * Boots into a launcher ring of games, each of which is an independent module
  * behind the Game interface. Adding one means writing a class and appending a
- * pointer to GAMES below.
+ * pointer to GAMES or MINI_GAMES below.
  *
  * This launcher lives in `factory`. `ota_0` holds the voice companion (or the
  * original XiaoZhi image before installing it). See docs/clawd-pet-voice.md.
@@ -50,7 +50,7 @@
 #include "sound.h"
 
 // ------------------------------------------------------------------- games ---
-// The whole registry. Order is the order they appear on the launcher ring.
+// Each registry has its own ring. Games live inside the GAMES folder.
 //
 // CLAWD PET enters the integrated voice companion when that image is installed;
 // otherwise the same care/evolution model runs locally in this launcher.
@@ -63,19 +63,60 @@ static GameHypno    g_hypno;
 static GameMusic    g_music;
 static GameSnake    g_snake;
 static GameBricks   g_bricks;
+static GameFolder   g_folder;
+static GameBack     g_back;
 
-static Game *const GAMES[] = { &g_clawd, &g_tap, &g_pet, &g_photos, &g_music, &g_hypno, &g_snake, &g_bricks, &g_settings };
+static Game *const GAMES[] = { &g_pet, &g_photos, &g_music, &g_hypno, &g_folder, &g_settings };
 static const int   GAME_COUNT = (int)(sizeof(GAMES) / sizeof(GAMES[0]));
+static Game *const MINI_GAMES[] = { &g_clawd, &g_tap, &g_snake, &g_bricks, &g_back };
+static const int MINI_GAME_COUNT = (int)(sizeof(MINI_GAMES) / sizeof(MINI_GAMES[0]));
 
 // ----------------------------------------------------------------- screens ---
 enum Screen { SCREEN_LAUNCHER, SCREEN_GAME };
 
 static Screen screen = SCREEN_LAUNCHER;
 static Game  *active = nullptr;
+static bool inGameFolder = false;
+static int rootSelection = 0, folderSelection = 0;
+
+static void showLauncher(bool folder)
+{
+    if (screen == SCREEN_LAUNCHER) {
+        if (inGameFolder) folderSelection = launcher::selectedIndex();
+        else rootSelection = launcher::selectedIndex();
+    }
+    inGameFolder = folder;
+    launcher::begin(folder ? MINI_GAMES : GAMES,
+                    folder ? MINI_GAME_COUNT : GAME_COUNT,
+                    folder ? folderSelection : rootSelection);
+    active = nullptr;
+    screen = SCREEN_LAUNCHER;
+}
+
+static void openApp(Game *app, bool folder)
+{
+    if (active) active->leave();
+    inGameFolder = folder;
+    active = app;
+    active->enter();
+    screen = SCREEN_GAME;
+    Serial.printf("[sys] launching '%s'\n", active->name());
+}
+
+static void openPicked(Game *picked)
+{
+    if (!inGameFolder && picked == &g_folder) showLauncher(true);
+    else if (inGameFolder && picked == &g_back) showLauncher(false);
+    else {
+        if (inGameFolder) folderSelection = launcher::selectedIndex();
+        else rootSelection = launcher::selectedIndex();
+        openApp(picked, inGameFolder);
+    }
+}
 
 // ------------------------------------------------------------- boot button ---
-// One gesture, two meanings by context: inside a game it returns to the launcher,
-// on the launcher it hands the board back to the stock system. Keeping the
+// Inside an app return to its parent ring; inside GAMES return home. Only the
+// home ring hands the board back to the voice system. Keeping the
 // durations distinct means the destructive one cannot happen by accident while
 // mashing to leave a game.
 static const unsigned long HOLD_BACK_TO_LAUNCHER = 900;
@@ -98,15 +139,17 @@ static void handleBootButton()
     if (bootFired) return;
 
     const unsigned long threshold =
-        (screen == SCREEN_GAME) ? HOLD_BACK_TO_LAUNCHER : HOLD_BACK_TO_STOCK;
+        (screen == SCREEN_GAME || inGameFolder) ? HOLD_BACK_TO_LAUNCHER : HOLD_BACK_TO_STOCK;
 
     if (held >= threshold) {
         bootFired = true;
         if (screen == SCREEN_GAME) {
             active->leave();
-            active = nullptr;
-            screen = SCREEN_LAUNCHER;
-            Serial.println("[sys] back to the launcher");
+            showLauncher(inGameFolder);
+            Serial.println(inGameFolder ? "[sys] back to GAMES" : "[sys] back to home");
+        } else if (inGameFolder) {
+            showLauncher(false);
+            Serial.println("[sys] back to home");
         } else {
             Serial.println("[sys] handing over to the stock system");
             xiaozhi::switchToAssistant();
@@ -216,7 +259,7 @@ void setup()
     // After the I2C bus is up, which the RTC shares with everything else.
     sysclock::begin();
 
-    launcher::begin(GAMES, GAME_COUNT);
+    showLauncher(false);
 
     showSplash();
     Serial.println("[sys] splash pushed");
@@ -292,31 +335,24 @@ void loop()
                         sysclock::writeFromSystem();
                     }
                 } else if (!strcmp(cmd, "P")) {
-                    if (active) active->leave();
-                    active = &g_photos;
-                    active->enter();
-                    screen = SCREEN_GAME;
+                    openApp(&g_photos, false);
                     Serial.println("[sys] diagnostics: PHOTOS opened");
                 } else if (!strcmp(cmd, "H")) {
                     if (active) active->leave();
-                    active = nullptr;
-                    screen = SCREEN_LAUNCHER;
+                    showLauncher(false);
                     Serial.println("[sys] diagnostics: launcher");
-                } else if (!strcmp(cmd, "S")) {
+                } else if (!strcmp(cmd, "GAMES")) {
                     if (active) active->leave();
-                    active = &g_settings;
-                    active->enter();
-                    screen = SCREEN_GAME;
+                    showLauncher(true);
+                    Serial.println("[sys] diagnostics: GAMES folder");
+                } else if (!strcmp(cmd, "S")) {
+                    openApp(&g_settings, false);
                     Serial.println("[sys] diagnostics: SETTINGS opened");
                 } else if (!strcmp(cmd, "W")) {
-                    if(active)active->leave();
-                    active=&g_settings;active->enter();g_settings.openTransfer();screen=SCREEN_GAME;
+                    openApp(&g_settings, false);g_settings.openTransfer();
                     Serial.println("[sys] diagnostics: WIFI TRANSFER opened");
                 } else if (!strcmp(cmd, "Y")) {
-                    if (active) active->leave();
-                    active = &g_hypno;
-                    active->enter();
-                    screen = SCREEN_GAME;
+                    openApp(&g_hypno, false);
                     Serial.println("[sys] diagnostics: HYPNO opened");
                 } else if (!strcmp(cmd, "N")) {
                     if (active==&g_photos) g_photos.next();
@@ -325,13 +361,11 @@ void loop()
                     if(active==&g_photos)g_photos.previous();
                     else if(active==&g_music)g_music.nextTrack(-1);
                 } else if (!strcmp(cmd, "M")) {
-                    if(active)active->leave();
-                    active=&g_music;active->enter();screen=SCREEN_GAME;
+                    openApp(&g_music, false);
                     Serial.println("[sys] diagnostics: MUSIC opened");
                 } else if (!strcmp(cmd, "GSNAKE") || !strcmp(cmd, "GBRICKS")) {
-                    if(active)active->leave();
-                    active=!strcmp(cmd,"GSNAKE")?static_cast<Game*>(&g_snake):static_cast<Game*>(&g_bricks);
-                    active->enter();screen=SCREEN_GAME;
+                    folderSelection = !strcmp(cmd,"GSNAKE") ? 2 : 3;
+                    openApp(MINI_GAMES[folderSelection], true);
                     Serial.printf("[sys] diagnostics: %s opened\n",active->name());
                 } else if (!strcmp(cmd, "V")) {
                     if(active==&g_music)g_music.togglePlayback();
@@ -340,8 +374,9 @@ void loop()
                     const bool ok=active==&g_music?g_music.setVolumePercent(volume,false):audio::setVolume(volume);
                     Serial.printf("[music] temporary volume=%d ok=%d\n",volume,ok);
                 } else if (!strcmp(cmd, "D")) {
-                    Serial.printf("[sys] screen=%s app=%s heap=%u internal=%u psram=%u lcd=%u\n",
+                    Serial.printf("[sys] screen=%s folder=%s app=%s heap=%u internal=%u psram=%u lcd=%u\n",
                         screen == SCREEN_LAUNCHER ? "launcher" : "app",
+                        inGameFolder ? "GAMES" : "home",
                         active ? active->name() : "none", ESP.getFreeHeap(),
                         heap_caps_get_free_size(MALLOC_CAP_INTERNAL), ESP.getFreePsram(),
                         LCD_completedTransfers());
@@ -387,10 +422,10 @@ void loop()
         Game *picked = launcher::update(dt);
         launcher::render();
         if (picked) {
-            active = picked;
-            active->enter();
-            screen = SCREEN_GAME;
-            Serial.printf("[sys] launching '%s'\n", active->name());
+            openPicked(picked);
+            // A folder switch changes the registry immediately. Paint its ring
+            // before sending the current framebuffer to the panel.
+            if (screen == SCREEN_LAUNCHER) launcher::render();
         }
     } else {
         active->update(dt);
@@ -405,7 +440,7 @@ void loop()
     }
 
     drawHoldIndicator(input::bootHeldMs(),
-                      (screen == SCREEN_GAME) ? HOLD_BACK_TO_LAUNCHER : HOLD_BACK_TO_STOCK,
+                      (screen == SCREEN_GAME || inGameFolder) ? HOLD_BACK_TO_LAUNCHER : HOLD_BACK_TO_STOCK,
                       &bandY0, &bandY1);
 
     LCD_pushBand(bandY0, bandY1, fb);

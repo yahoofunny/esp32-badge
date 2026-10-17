@@ -2,10 +2,12 @@
 #include <cassert>
 #include <cstdio>
 #include <cmath>
+#include <initializer_list>
 #include "../system/launcher.cpp"
 
 namespace {
 bool finger=false,released=false;int px=180,py=114;float lean=0;
+int entryCount=6;
 class Dummy:public Game{
     const char* name()const override{return "APP";}
     uint16_t accent()const override{return 0xffff;}
@@ -13,7 +15,7 @@ class Dummy:public Game{
 } apps[9];
 Game* entries[]={&apps[0],&apps[1],&apps[2],&apps[3],&apps[4],&apps[5],&apps[6],&apps[7],&apps[8]};
 void point(float angle){px=int(lroundf(180+112*cosf(angle)));py=int(lroundf(180+66*sinf(angle)));}
-void reset(){finger=released=false;lean=0;launcher::begin(entries,9);}
+void reset(){finger=released=false;lean=0;launcher::begin(entries,entryCount);}
 void hold(float angle){finger=true;released=false;point(angle);assert(!launcher::update(.016f));}
 void lift(){finger=false;released=true;assert(!launcher::update(.016f));released=false;}
 }
@@ -23,8 +25,10 @@ int tapX(){return px;}int tapY(){return py;}float tiltX(){return lean;}
 }
 namespace sound {void play2(int,int,int,int){}void launch(){}}
 int main(){
+  for(int count:{6,5}) {
+    entryCount=count;
     reset();hold(-PI_F/2);
-    for(int i=1;i<=12;++i)hold(-PI_F/2+i*(2*PI_F/9)/12);
+    for(int i=1;i<=12;++i)hold(-PI_F/2+i*(2*PI_F/count)/12);
     assert(launcher::touchDragging && fabsf(launcher::selPos+1)<.03f);
     lift();assert(launcher::sel==-1 && launcher::launching<0);
     for(int i=0;i<60;++i)assert(!launcher::update(.016f));
@@ -47,6 +51,10 @@ int main(){
     const int selected=launcher::sel;
     for(int i=0;i<10;++i)assert(!launcher::update(.016f));
     assert(launcher::sel==selected);
+    launcher::begin(entries,count,count+2);assert(launcher::selectedIndex()==2);
+    launcher::begin(entries,count,-1);assert(launcher::selectedIndex()==count-1);
+  }
     launcher::begin(nullptr,0);assert(!launcher::update(.016f));
-    puts("PASS: nine-entry ring drag, snap, tap, angle wrap, centre crossing, tilt suppression, empty registry");
+    assert(launcher::selectedIndex()==0);
+    puts("PASS: six-entry home and five-entry folder rings, drag, snap, tap, wrap, centre crossing, tilt suppression, restored selection");
 }

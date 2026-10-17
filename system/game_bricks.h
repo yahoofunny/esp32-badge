@@ -20,6 +20,8 @@ private:
     bool redraw=true,painted=false,tracking=false,moved=false;
     int startX=0,startY=0,startTarget=-1,pressed=-1;
     uint32_t lastFrame=0;
+    uint32_t lastControlMs=0;
+    bool controlSeen=false;
     void reset();
     void serve();
     void movePaddle(float delta);

@@ -20,6 +20,9 @@ private:
     float elapsed=0;
     bool redraw=true,tracking=false,moved=false,pauseTouch=false,pressed=false;
     int startX=0,startY=0;
+    uint32_t lastPauseMs=0;
+    uint16_t pauseChanges=0;
+    bool pauseSeen=false;
     void reset();
     void placeFood();
     void queueTurn(int next);

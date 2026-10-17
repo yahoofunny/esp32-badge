@@ -9,7 +9,9 @@ static const uint16_t COL_GRID=PX(RGB565(0x19,0x26,0x30));
 static const uint16_t COL_TEXT=PX(RGB565(0xED,0xE5,0xD8));
 static const uint16_t COL_DIM=PX(RGB565(0x91,0xA7,0xA8));
 static const uint16_t COL_FOOD=PX(RGB565(0xF4,0xAD,0x68));
-static bool snakePause(int x,int y){return x>=124&&x<=236&&y>=314&&y<=342;}
+// The whole bottom strip is a pause target, including the blank margin around
+// its label. Activate on contact, so finger drift cannot cancel the action.
+static bool snakePause(int x,int y){return x>=0&&x<SCR_W&&y>=298&&y<SCR_H;}
 static bool snakeStart(int x,int y){return x>=128&&x<=232&&y>=224&&y<=267;}
 
 void GameSnake::reset(){
@@ -18,7 +20,7 @@ void GameSnake::reset(){
     placeFood();redraw=true;
 }
 void GameSnake::enter(){
-    reset();mode=READY;tracking=moved=pauseTouch=pressed=false;
+    reset();mode=READY;tracking=moved=pauseTouch=pressed=pauseSeen=false;pauseChanges=0;lastPauseMs=0;
 }
 void GameSnake::placeFood(){
     if(length==CAPACITY){food=-1;mode=WON;return;}
@@ -50,16 +52,22 @@ void GameSnake::update(float dt){
     const bool oldPressed=pressed;
     if(input::touchDown()){
         const int x=input::tapX(),y=input::tapY();
-        if(!tracking){tracking=true;startX=x;startY=y;moved=false;pauseTouch=snakePause(x,y);}
+        if(!tracking){
+            tracking=true;startX=x;startY=y;moved=false;pauseTouch=snakePause(x,y);
+            if(pauseTouch&&(mode==PLAYING||mode==PAUSED)&&(!pauseSeen||uint32_t(millis()-lastPauseMs)>=220)){
+                mode=mode==PAUSED?PLAYING:PAUSED;elapsed=0;redraw=true;
+                pauseSeen=true;lastPauseMs=millis();++pauseChanges;
+                Serial.printf("[snake] pause-touch x=%d y=%d mode=%d\n",x,y,mode);
+            }
+        }
         const int dx=x-startX,dy=y-startY;
-        if(dx*dx+dy*dy>100)moved=true;
-        pressed=!moved&&(pauseTouch?snakePause(x,y):mode!=PLAYING&&mode!=PAUSED&&snakeStart(x,y));
+        if(dx*dx+dy*dy>24*24)moved=true;
+        pressed=pauseTouch&&(mode==PLAYING||mode==PAUSED);
+        if(!pauseTouch)pressed=!moved&&mode!=PLAYING&&mode!=PAUSED&&snakeStart(startX,startY)&&snakeStart(x,y);
     }else{
         if(tracking&&!moved&&input::tapped()){
             const int x=input::tapX(),y=input::tapY();
-            if(pauseTouch&&snakePause(x,y)&&(mode==PLAYING||mode==PAUSED)){
-                mode=mode==PAUSED?PLAYING:PAUSED;elapsed=0;redraw=true;
-            }else if(mode==PLAYING&&!pauseTouch){
+            if(mode==PLAYING&&!pauseTouch){
                 const int heading=turnCount?turns[turnCount-1]:direction;
                 const int dx=x-(68+(body[0]%SIDE)*16),dy=y-(68+(body[0]/SIDE)*16);
                 // A horizontal snake accepts taps above/below its head; a
@@ -105,9 +113,7 @@ void GameSnake::render(){
         gfx::textCentered(mode==READY?"PLAY":"RETRY",237,pressed?COL_BG:COL_TEXT,2);
         gfx::textCentered("HOLD BOOT TO EXIT",324,COL_DIM);
     }else{
-        const int heading=turnCount?turns[turnCount-1]:direction;
-        gfx::textCentered(heading==1||heading==3?"TAP ABOVE / BELOW":"TAP LEFT / RIGHT",304,COL_DIM);
-        gfx::fillRect(124,316,112,24,pressed&&pauseTouch?accent():COL_GRID);
+        gfx::fillRect(110,308,140,36,pressed&&pauseTouch?accent():COL_GRID);
         gfx::textCentered(mode==PAUSED?"RESUME":"PAUSE",324,pressed&&pauseTouch?COL_BG:COL_TEXT);
         if(mode==PAUSED){gfx::fillRect(100,152,160,51,COL_BG);gfx::textCentered("PAUSED",170,COL_TEXT,2);}
     }
@@ -120,5 +126,5 @@ void GameSnake::drawIcon(float cx,float cy,float size) const{
     gfx::fillCircle(cx+2*u,cy-1.5f*u,size*.025f,PX(RGB565(0x10,0x18,0x20)));
 }
 void GameSnake::printDiagnostics() const{
-    Serial.printf("[snake] mode=%d score=%d best=%d length=%d head=%u food=%d turns=%d\n",mode,score,best,length,body[0],food,turnCount);
+    Serial.printf("[snake] mode=%d score=%d best=%d length=%d head=%u food=%d turns=%d pauses=%u input=%d,%d footer=%d\n",mode,score,best,length,body[0],food,turnCount,pauseChanges,startX,startY,pauseTouch);
 }

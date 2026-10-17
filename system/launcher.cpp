@@ -104,12 +104,17 @@ static float frontness(float y)
     return t;
 }
 
-void begin(Game *const *games, int count)
+int selectedIndex()
+{
+    return g_count > 0 ? selIndex() : 0;
+}
+
+void begin(Game *const *games, int count, int selected)
 {
     g_games = games;
     g_count = count;
-    selPos = 0.0f;
-    sel = 0;
+    sel = count > 0 ? ((selected % count) + count) % count : 0;
+    selPos = (float)sel;
     armed = true;
     leanHeld = 0.0f;
     age = 0.0f;

@@ -132,30 +132,47 @@ int main(){
     const int head=MiniGamesTestAccess::head(snake);for(int i=0;i<100;++i)frame(snake,.02f);
     assert(MiniGamesTestAccess::head(snake)==head&&snake.dirtyY1<snake.dirtyY0);
     tap(snake,180,326);assert(MiniGamesTestAccess::mode(snake)==1);
+    // Pause is contact-triggered over the whole footer, including outside the
+    // old tiny button. Drift and a long hold cannot cancel or toggle it twice.
+    testMillis+=250;finger=true;px=100;py=340;frame(snake);
+    assert(MiniGamesTestAccess::mode(snake)==2);
+    px=140;py=345;for(int i=0;i<30;++i)frame(snake,.02f);
+    assert(MiniGamesTestAccess::mode(snake)==2);
+    finger=false;released=true;frame(snake);released=false;
+    tap(snake,180,330);assert(MiniGamesTestAccess::mode(snake)==1);
+    tap(snake,180,330);assert(MiniGamesTestAccess::mode(snake)==1); // Ignore contact bounce.
     snake.update(NAN);snake.update(-1);snake.update(INFINITY);assert(MiniGamesTestAccess::head(snake)==head);
     MiniGamesTestAccess::snakeFixture(snake);snake.render();ppm("build/snake-playing.ppm");
     GameBricks bricks;bricks.enter();bricks.render();ppm("build/bricks-ready.ppm");
     MiniGamesTestAccess::bricksChecks(bricks);
     tap(bricks,180,240);assert(MiniGamesTestAccess::mode(bricks)==2);
     finger=released=false;bricks.enter();tap(bricks,180,240);assert(MiniGamesTestAccess::mode(bricks)==2);
-    tap(bricks,110,316);assert(MiniGamesTestAccess::paddle(bricks)==162);
-    finger=true;px=110;py=316;frame(bricks);assert(MiniGamesTestAccess::paddle(bricks)==144);
+    tap(bricks,100,200);assert(MiniGamesTestAccess::paddle(bricks)==162);
+    finger=true;px=100;py=200;frame(bricks);assert(MiniGamesTestAccess::paddle(bricks)==144);
     for(int i=0;i<5;++i)frame(bricks,.02f);assert(MiniGamesTestAccess::paddle(bricks)==144);
     for(int i=0;i<50;++i)frame(bricks,.02f);assert(MiniGamesTestAccess::paddle(bricks)==96);
     finger=false;released=true;frame(bricks);released=false;
-    tap(bricks,250,316);assert(MiniGamesTestAccess::paddle(bricks)==114);
-    finger=true;px=250;py=316;frame(bricks);for(int i=0;i<50;++i)frame(bricks,.02f);
+    tap(bricks,260,200);assert(MiniGamesTestAccess::paddle(bricks)==114);
+    finger=true;px=260;py=200;frame(bricks);for(int i=0;i<50;++i)frame(bricks,.02f);
     assert(MiniGamesTestAccess::paddle(bricks)==264);finger=false;released=true;frame(bricks);released=false;
     bricks.enter();tap(bricks,180,240);
     tap(bricks,180,316);assert(MiniGamesTestAccess::mode(bricks)==3);
     const float x=MiniGamesTestAccess::x(bricks),y=MiniGamesTestAccess::y(bricks);
     for(int i=0;i<100;++i)frame(bricks,.02f);
     assert(MiniGamesTestAccess::x(bricks)==x&&MiniGamesTestAccess::y(bricks)==y&&bricks.dirtyY1<bricks.dirtyY0);
-    const float parked=MiniGamesTestAccess::paddle(bricks);tap(bricks,110,316);assert(MiniGamesTestAccess::paddle(bricks)==parked);
+    const float parked=MiniGamesTestAccess::paddle(bricks);tap(bricks,100,200);assert(MiniGamesTestAccess::paddle(bricks)==parked);
     tap(bricks,180,316);assert(MiniGamesTestAccess::mode(bricks)==2);
-    MiniGamesTestAccess::serving(bricks);tap(bricks,110,316);
+    MiniGamesTestAccess::serving(bricks);tap(bricks,100,200);
     assert(MiniGamesTestAccess::mode(bricks)==1&&MiniGamesTestAccess::x(bricks)==MiniGamesTestAccess::paddle(bricks));
+    testMillis+=250;
     tap(bricks,180,316);assert(MiniGamesTestAccess::mode(bricks)==2);
+    // Both far sides of the screen control movement, with no small hit target.
+    bricks.enter();tap(bricks,180,240);tap(bricks,55,165);assert(MiniGamesTestAccess::paddle(bricks)==162);
+    tap(bricks,305,165);assert(MiniGamesTestAccess::paddle(bricks)==180);
+    finger=true;px=100;py=200;frame(bricks);px=130;py=230;
+    for(int i=0;i<20;++i)frame(bricks,.02f);assert(MiniGamesTestAccess::paddle(bricks)<150);
+    px=260;frame(bricks);for(int i=0;i<30;++i)frame(bricks,.02f);
+    assert(MiniGamesTestAccess::paddle(bricks)>200);finger=false;released=true;frame(bricks);released=false;
     bricks.update(NAN);bricks.update(-1);bricks.update(INFINITY);
     assert(std::isfinite(MiniGamesTestAccess::x(bricks))&&std::isfinite(MiniGamesTestAccess::y(bricks)));
     MiniGamesTestAccess::bricksFixture(bricks);bricks.render();ppm("build/bricks-playing.ppm");
@@ -164,5 +181,5 @@ int main(){
     testMillis=0xfffffff0;bricks.render();testMillis=24;bricks.render();
     assert(bricks.dirtyY0==0&&bricks.dirtyY1==359); // Render pacing survives millis wrap.
     for(int i=0;i<8;++i)assert(pixels[i]==0x53a7&&pixels[pixels.size()-1-i]==0x53a7);
-    puts("PASS: head-relative snake taps/turns/growth/collisions/win; bricks button taps/hold/clamps/serve/pause, rebounds/lives/full-round win/substeps; guarded framebuffer and timing");
+    puts("PASS: head-relative snake taps/turns/growth/collisions/win; whole-footer contact pause with drift/bounce protection; bricks half-screen taps/hold/drift/clamps/serve/pause and full-round win; guarded framebuffer and timing");
 }

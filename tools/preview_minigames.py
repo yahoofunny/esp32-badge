@@ -9,7 +9,8 @@ if __name__=='__main__':
     destination=ROOT/'docs/images';destination.mkdir(exist_ok=True)
     for name in ['snake','bricks']:
         Image.open(ROOT/f'build/{name}-playing.ppm').save(destination/f'{name}.png',optimize=True)
-    Image.open(render_launcher()).save(destination/'launcher.png',optimize=True)
+    Image.open(render_launcher(selected_class='GameFolder')).save(destination/'launcher.png',optimize=True)
+    Image.open(render_launcher('MINI_GAMES','GameSnake','games-folder')).save(destination/'games-folder.png',optimize=True)
     sheet=Image.new('RGB',(720,768),'#08080d');draw=ImageDraw.Draw(sheet)
     for i,name in enumerate(['snake-ready','bricks-ready','snake-playing','bricks-playing']):
         x=(i%2)*360;y=(i//2)*384

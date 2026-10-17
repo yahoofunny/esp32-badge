@@ -6,10 +6,11 @@
 - **同一只宠物**：蛋、七种成长形态、喂食、抚摸、拖动、休息和清洁；对话时保留形态与配饰，显示表情和中文字幕。
 - **20 种像素配饰**：花朵、安全帽、耳机、巫师帽等叠加在原身体上，体型和比例保持一致；衣柜支持预览、取消和保存。
 - **手指拖转主页**：沿应用圆环滑动，松手吸附，点击打开；主页没有左上角时钟。
+- **GAMES 游戏文件夹**：四个小游戏收进独立圆环，操作与主页一致，退出游戏回到文件夹。
 - **满屏相册**：左右滑动或点击左右两侧翻页，底部显示页码；长按约 **650ms** 保持原来的全屏 / 原显示状态切换。
 - **24 个内置 Clawd 动图**：打字、思考、睡觉、扫地、戴耳机和迷你形态等；原样保留动画，离线可看，SD 卡照片继续追加。
 - **HYPNO 惯性摆钟**：随设备左右晃动摆起，停止晃动后逐渐衰减；点击暂停/继续，底部减号、加号切换三档灵敏度。
-- **SNAKE 贪吃蛇 / BRICKS 打砖块**：点击蛇头周围转向，左右键控制挡板；均支持暂停、得分、当次开机最高分和重新开始。
+- **SNAKE 贪吃蛇 / BRICKS 打砖块**：点击蛇头周围转向，触摸左右半屏控制挡板；均支持暂停、得分、当次开机最高分和重新开始。
 - **MUSIC 本地播放器**：SD 卡 MP3、WAV 等音频，上一首/下一首、暂停/继续、进度和音量；空音乐目录可自动生成原创演示旋律。
 - **Wi-Fi 传输**：设置中开启独立热点，手机或电脑通过网页批量上传音乐和照片，无需拔卡。
 - **USB 连接提示与省电休眠**：电脑插拔及零电流读数的自动恢复已通过实机验证；CHARGE ONLY 熄屏休眠，按 BOOT 唤醒。充电状态仅显示在设置里。
@@ -208,7 +209,7 @@ transfer counter; transfer errors and timeouts are reported instead of ignored.
 
 The firmware that occupies `factory` is the project's own little system: it boots into
 a launcher ring of games, and each game is an independent module behind the `Game`
-interface. Adding one means writing a class and appending a pointer to `GAMES` in
+interface. Adding an app means appending its class instance to `GAMES`; add mini-games to `MINI_GAMES` in
 `system/system.ino`.
 
 ```
@@ -217,12 +218,12 @@ system/
 ├── gfx.{h,cpp}           framebuffer primitives, rotated 2bpp sprites, 8x8 text
 ├── input.{h,cpp}         tilt (with auto-trim), touch, BOOT button
 ├── arena.{h,cpp}         the shared backdrop: wall ring, floor dots
-├── launcher.{h,cpp}      the carousel home screen
+├── launcher.{h,cpp}      shared home/folder carousel and navigation tiles
 ├── game.h                the Game interface
 ├── game_clawd.{h,cpp}    tilt-controlled rolling clawd
 ├── game_tap.{h,cpp}      touch-controlled clawd tap
 ├── game_snake.{h,cpp}    15×15 head-relative tap controls, turn queue and pause
-├── game_bricks.{h,cpp}   left/right paddle buttons, 20 bricks, three lives and pause
+├── game_bricks.{h,cpp}   left/right screen touch zones, 20 bricks, three lives and pause
 ├── game_pet.{h,cpp}      CLAWD PET: care, egg, evolution, gestures and voice presentation
 ├── outfits.{h,cpp}       twenty accessories over the existing pet body
 ├── game_photos.{h,cpp}   SD-card photos and animations, fill / fit toggle
@@ -239,7 +240,9 @@ system/
 └── partitions.csv        must match the installed layout — see Firmware slots below
 ```
 
-The nine launcher entries are CLAWD ROLL, CLAWD TAP, CLAWD PET, PHOTOS, MUSIC, HYPNO, SNAKE, BRICKS and SETTINGS.
+The six home entries are CLAWD PET, PHOTOS, MUSIC, HYPNO, GAMES and SETTINGS.
+GAMES opens a second carousel with CLAWD ROLL, CLAWD TAP, SNAKE, BRICKS and BACK.
+Both rings use the same touch-drag, tap and tilt controls and remember their selection.
 Each module draws its own icon; the pet has one entry for both care and voice.
 CLAWD PET keeps its classic orange launcher icon; inside the app, the creature's
 body color continues to follow its current evolution form.
@@ -342,7 +345,8 @@ USB 插入后会自动给主板供电；插线时 PWR 的关机请求无法切�
 **Controls.** Drag a finger around the application ring to rotate it; release to snap
 to the nearest app. Tap an icon or the centre to open it. Tilt remains optional and
 is suppressed during touch. The home screen has no clock. Hold BOOT in a game to
-return home; in the voice pet a long press returns to the launcher firmware.
+return to the GAMES folder; hold it there or tap BACK to return home. Other apps
+return directly home. In the voice pet a long press returns to the launcher firmware.
 
 **PHOTOS.** Includes **24 distinct original Clawd GIFs**, followed by the SD card's
 `/Photos` contents. Swipe left for next and right for previous, or tap the right/left
@@ -464,8 +468,14 @@ paths and both ends of the drawing cost are covered.
 
 ### SNAKE / BRICKS
 
-两个游戏都从主页圆环打开，完全离线。点击 **PLAY** 开始，底部暂停键暂停或继续，
-结束后点 **RETRY** 重开，长按 BOOT 约 0.9 秒返回主页。最高分保留到本次开机结束。
+主页点 **GAMES** 文件夹，里面仍是相同的环绕菜单，收纳 **CLAWD ROLL、CLAWD TAP、SNAKE、BRICKS**。
+点 **BACK** 或长按 BOOT 约 0.9 秒回主页；游戏里长按 BOOT 约 0.9 秒返回文件夹，保留选中位置。
+一次长按只返回一层，主页长按约 2.2 秒进入语音系统的功能保留。
+
+![GAMES 文件夹圆环，实际 C++ 软件渲染](docs/images/games-folder.png)
+
+两个新游戏完全离线，点击 **PLAY** 开始，底部暂停键暂停或继续，
+结束后点 **RETRY** 重开。最高分保留到本次开机结束。
 
 | SNAKE 贪吃蛇 | BRICKS 打砖块 |
 |---|---|
@@ -475,17 +485,21 @@ paths and both ends of the drawing cost are covered.
 竖着走时，点击蛇头左侧或右侧转为向左或向右。以蛇头的位置判断，不是按屏幕中心划分。
 吃橙色食物得分并逐渐加速；
 撞墙或撞到身体结束，填满棋盘获胜。禁止直接反向，快速连续转向会按移动步数依次执行，
-每次点击只登记一次方向，蛇头眼睛立即提示下一个转向。静止画面不重复传输。
+每次点击只登记一次方向，蛇头眼睛立即提示下一个转向。底部整条区域按下即暂停或继续，
+不要求对准文字，也不会因为松手前手指偏移而取消；短时间触点抖动不会反复切换。静止画面不重复传输。
 
-**BRICKS**：底部左右键控制挡板，点击立即移动一小步，按住超过约 180ms 连续移动。
-中间按键暂停或继续；掉球后先用左右键调整挡板，再点中间播放键发球。
+**BRICKS**：触摸左半屏向左移动，触摸右半屏向右移动；点击立即移动一小步，按住超过约 180ms 连续移动。
+无需瞄准小箭头，手指在同一半区内偏移不会取消，跨过中线可切换方向；对应场地边框高亮反馈。
+底部中央的大触控区按下即暂停或继续；掉球后先用左右半屏调整挡板，再点底部 **PLAY** 发球。
 反弹角度取决于球击中挡板的位置。共 20 块砖、三条命，每块 10 分，打完全部砖块获胜。
 物理更新拆成不超过 8ms 的子步，避免快速小球穿过砖块，通常按约 30 帧/秒绘制。
 主循环在同一毫秒内再次运行时按零时间推进，跳过屏幕刷新不会让游戏加速。
 
 `python tools/preview_minigames.py` 编译并运行真实游戏逻辑，覆盖转向队列、吃食物、尾部与身体碰撞、
-填满棋盘、反弹、掉命、完整打砖通关、蛇头相对点击、左右键点击及按住、暂停、绘制节奏及帧缓冲边界，
-并生成上面的软件截图和九应用主页图。串口 `GSNAKE` / `GBRICKS` 打开对应游戏，`D` 查看状态。
+填满棋盘、反弹、掉命、完整打砖通关、蛇头相对点击、左右半屏点击及按住、整条底部暂停及防抖、绘制节奏及帧缓冲边界，
+并生成上面的软件截图、六入口主页和游戏文件夹图。串口 `GAMES` 打开文件夹，`GSNAKE` / `GBRICKS` 打开对应游戏，`D` 查看状态。
+`folder_nav` 检查实际菜单注册表、触控打开、逐层返回、选中位置恢复和 BOOT 长按锁存；
+`launcher_drag` 同时检查六入口主页及五入口文件夹的拖动、点击和角度回绕。
 `frame_timing` 回归检查覆盖短循环、长停顿及毫秒计数回绕，防止计时误差随空闲循环累积。
 
 ### CLAWD PET
@@ -753,7 +767,7 @@ header. Details in [docs/hardware.md](docs/hardware.md).
 
 ## Current status and next work
 
-- [x] Touch-drag launcher ring, snapping, tilt support and nine app entries
+- [x] Six-entry home carousel and GAMES folder carousel, touch-drag, snapping, tilt and parent navigation
 - [x] HYPNO sensor-driven inertial pocket watch, three sensitivities, damping and pause/resume
 - [x] CLAWD ROLL and CLAWD TAP mini-games
 - [x] SNAKE and BRICKS mini-games, touch controls, pause, retry and per-boot high scores
