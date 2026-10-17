@@ -194,7 +194,8 @@ void setup()
     // The first battery sample, so the launcher has something to draw immediately and
     // so a gauge that is not answering is visible in the log rather than only as "--"
     // on the screen.
-    power::poll(0);
+    power::restoreBatteryCapacity();
+    power::poll(millis());
     const power::Reading batt = power::cached();
     Serial.printf("[batt] %s: %d%% %d mV\n", batt.valid ? "ok" : "not answering",
                   batt.percent, batt.millivolts);
@@ -305,6 +306,11 @@ void loop()
                     power::printDiagnostics();
                 } else if (!strcmp(cmd, "L")) {
                     comparePowerLoad(true);
+                } else if (!strcmp(cmd, "C500")) {
+                    LCD_waitTrans();
+                    Serial.printf("[capacity] configure 500mAh %s\n",
+                        power::configureBattery500()?"verified":"FAILED");
+                    power::printDiagnostics();
                 }
                 n = 0;
             } else if (n < 23) {

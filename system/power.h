@@ -23,5 +23,8 @@ bool chargeOnlyRequested();
 bool takeRecoveryRequest(uint32_t nowMs);
 // Read-only serial diagnostics, including USB transitions across cable removal.
 void printDiagnostics();
+// Only a locally saved, explicitly configured battery is reapplied after gauge POR.
+void restoreBatteryCapacity();
+bool configureBattery500();
 
 }  // namespace power
