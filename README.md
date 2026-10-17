@@ -10,6 +10,7 @@
 - **24 个内置 Clawd 动图**：打字、思考、睡觉、扫地、戴耳机和迷你形态等；原样保留动画，离线可看，SD 卡照片继续追加。
 - **HYPNO 惯性摆钟**：随设备左右晃动摆起，停止晃动后逐渐衰减；点击暂停/继续，底部减号、加号切换三档灵敏度。
 - **MUSIC 本地播放器**：SD 卡 MP3、WAV 等音频，上一首/下一首、暂停/继续、进度和音量；空音乐目录可自动生成原创演示旋律。
+- **Wi-Fi 传输**：设置中开启独立热点，手机或电脑通过网页批量上传音乐和照片，无需拔卡。
 - **USB 连接提示与省电休眠**：电脑插拔及零电流读数的自动恢复已通过实机验证；CHARGE ONLY 熄屏休眠，按 BOOT 唤醒。充电状态仅显示在设置里。
 - **触摸与绘制分开调度**：输入目标 **20ms**，本机实测约 **30ms**；省电只降低绘制频率，按下即唤醒并高亮，松手执行一次，反馈保留约 **150ms**。
 
@@ -272,11 +273,34 @@ registers; `S` opens SETTINGS for display checks.
 异常的完整电气原因仍未确定，任意充电器兼容性与充满状态尚未完整验证。恢复失败仍显示 **CHARGE UNKNOWN**。
 正电流表示电量计测到电池有净流入电流，不代替充电芯片 STAT 状态，也不会用 USB 连接直接判定充电。
 
-**SETTINGS** has VOLUME, SYSTEM, NET, USB and POWER pages behind a small arc menu. VOLUME is the assistant's level,
+**SETTINGS** has VOLUME, SYSTEM, NET, USB, POWER and WIFI pages behind a small arc menu. VOLUME is the assistant's level,
 kept in the NVS key its own AudioCodec::Start() reads — see system/audio.h for why that
 key and not the codec's register, which the assistant rewrites on every boot. SYSTEM is
 the chip, memory, build and battery; NET shows stored assistant configuration. USB
-provides the SD-card access mode. The integrated voice pet handles assistant networking.
+provides the SD-card access mode. WIFI starts a local hotspot for media transfer;
+the integrated voice pet retains its own assistant networking configuration.
+
+**无线传音乐和照片：SETTINGS → WIFI → START HOTSPOT。**
+
+1. 手机或电脑连接吧唧显示的 `BADGE-xxxx` 热点，输入屏幕上的密码。
+2. 保持此热点连接，即使系统提示“没有互联网”；浏览器打开 `http://192.168.4.1`。
+3. 选择音乐或照片，可批量上传，网页显示进度和 SD 卡文件列表。
+4. 完成后在吧唧点 STOP / BACK，或长按 BOOT 返回主页，再打开 MUSIC / PHOTOS 即可重新扫描。
+
+音乐支持 MP3、WAV、M4A/AAC、FLAC、OGG。网页将静态 JPG/PNG/WebP 转为最长边
+1280 像素的 JPG，兼容相册解码器；GIF 和 BMP 原样上传，GIF 保留动画。
+单个上传文件上限 50 MiB，每个文件夹最多 64 个媒体文件。同名文件自动添加数字后缀，
+已有内容不覆盖；上传中断会删除临时数据，完整写入后才加入歌单或相册。
+上传由独立 HTTP 任务分块写卡，界面仍可操作。退出会等待上传任务结束、卸载 SD 并关闭热点，
+不修改小智的 Wi-Fi 配置。热点有独立的设备密码，保存在 `badge-transfer` 命名空间。
+
+<img src="docs/images/wifi-transfer.png" width="240" alt="WIFI 传输页面，实际 C++ 渲染，热点与密码均为示例">
+<img src="docs/images/wifi-transfer-web.png" width="240" alt="手机传输网页的浏览器测试截图，文件列表为测试数据">
+
+传输检查：`python tools/native_checks.py` 覆盖真实上传处理函数的重名保护、分块写入、中断清理、
+文件名与大小限制；`node tools/test_transfer_web.cjs` 验证网页批量上传、照片转换和 GIF 保留。
+浏览器检查使用本机 Edge 和 Playwright（可用 `BADGE_NODE_MODULES` 指定依赖目录）。
+串口 `W` 打开并启动 Wi-Fi 传输，`D` 报告客户端数、接收字节与已保存数量。
 
 **仅充电：SETTINGS → POWER → CHARGE ONLY。** 页面显示当前电量与充电状态，随后关闭背光与显示输出，让主控和无线硬件进入深度休眠；按 **BOOT** 唤醒。电池充电仍由板载充电芯片独立控制，没有提高充电电流或修改电池参数。休眠时 USB 串口会断开，烧录前先按 BOOT 唤醒。
 

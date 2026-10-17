@@ -29,8 +29,8 @@ namespace charge_sleep {
     // shutdown or charger configuration: it must continue charging independently.
     Wire.beginTransmission(0x6b);Wire.write(0x08);Wire.write(0);Wire.endTransmission();
     Wire.beginTransmission(0x15);Wire.write(0xfe);Wire.write(0);Wire.endTransmission();
-    // This launcher never initialises WiFi; returning from the voice firmware
-    // already resets its connection. Deep sleep powers the radio down as well.
+    // Settings closes its transfer hotspot before this call. Deep sleep powers
+    // down the radio as well; returning from the voice firmware resets it.
     pinMode(9,OUTPUT);digitalWrite(9,LOW);
     Set_Backlight(0);
     esp_lcd_panel_disp_on_off(panel_handle,false);

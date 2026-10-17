@@ -9,10 +9,8 @@
 // codec's register: the register is rewritten by the assistant on every boot, so
 // writing it reaches nothing.
 //
-// The other two pages are read-only. SYSTEM is the chip, memory and build; NET is what
-// the assistant in the other slot is configured with -- its wifi, its server, the
-// device id -- because that is the only network this board has, and this firmware never
-// joins one. The page says so, rather than letting it read as a live link.
+// NET shows the other firmware's saved configuration. WIFI separately enables a
+// local hotspot for SD media transfer and shuts its radio down on exit.
 class GameSettings : public Game {
 public:
     const char *name() const override { return "SETTINGS"; }
@@ -23,10 +21,12 @@ public:
     void leave() override;
     void update(float dt) override;
     void render() override;
+    void openTransfer();
+    void printDiagnostics() const;
 
 
 private:
-    enum Page { PAGE_MENU, PAGE_VOLUME, PAGE_SYSTEM, PAGE_NET, PAGE_USB, PAGE_POWER };
+    enum Page { PAGE_MENU, PAGE_VOLUME, PAGE_SYSTEM, PAGE_NET, PAGE_USB, PAGE_POWER, PAGE_TRANSFER };
 
     Page page = PAGE_MENU;
 
@@ -56,6 +56,10 @@ private:
     void renderNet();
     void renderUsb();
     void renderPower();
+    void updateTransfer();
+    void renderTransfer();
+    uint32_t transferFrameAt=0;
+    bool transferCardFailed=false;
 
     // The way back, at the top centre. Not the top-left: at that height the round bezel
     // leaves nothing visible out there.

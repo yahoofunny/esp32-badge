@@ -14,6 +14,8 @@ TESTS={
     'hypno_motion':['tests/hypno_motion_test.cpp'],
     'music_output':['tests/music_output_test.cpp'],
     'music_task':['tests/music_task_test.cpp','-pthread'],
+    'transfer_rules':['tests/transfer_rules_test.cpp'],
+    'transfer_http':['tests/transfer_http_test.cpp'],
     'photo_blit':['tests/photo_blit_test.cpp'],
     'photo_gif':['tests/photo_gif_test.cpp'],
     'photo_gif_native':['tests/photo_gif_test.cpp','-DCLAWD_NATIVE_RGB565=1'],
@@ -32,7 +34,7 @@ def run_checks(names=None):
     env['PATH']=str(Path(compiler).parent)+os.pathsep+env.get('PATH','')
     (ROOT/'build').mkdir(exist_ok=True)
     for name in names or TESTS:
-        if name in ('music_output','music_task'):
+        if name in ('music_output','music_task','transfer_http'):
             def function(source,signature):
                 start=source.index(signature);opening=source.index('{',start)
                 depth=1;end=opening+1
@@ -45,10 +47,15 @@ def run_checks(names=None):
             decoder=(ROOT/'lib/badge_audio_i2s/src/BadgeAudio.cpp').read_text(encoding='utf-8')
             if name=='music_output':
                 generated=function(app,'void audio_process_i2s(')+'\n'+function(decoder,'bool Audio::playSample(')
-            else:
+            elif name=='music_task':
                 generated=';\n'.join(function(app,signature) for signature in
                     ('struct MusicPump {','struct MusicGuard {','void GameMusic::pumpAudio(',
                      'void GameMusic::leave('))
+            else:
+                transfer=(ROOT/'lib/badge_transfer/src/BadgeTransfer.cpp').read_text(encoding='utf-8')
+                generated='\n'.join(function(transfer,signature) for signature in
+                    ('static void message(','static esp_err_t reply(',
+                     'static String jsonString(','static esp_err_t upload('))
             (ROOT/'build'/(name+'_functions.h')).write_text(generated,encoding='utf-8')
         binary=ROOT/'build'/(name+'_test'+('.exe' if os.name=='nt' else ''))
         subprocess.run([compiler,'-std=c++17','-O2','-static','-Itests/native',

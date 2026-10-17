@@ -297,6 +297,10 @@ void loop()
                     active->enter();
                     screen = SCREEN_GAME;
                     Serial.println("[sys] diagnostics: SETTINGS opened");
+                } else if (!strcmp(cmd, "W")) {
+                    if(active)active->leave();
+                    active=&g_settings;active->enter();g_settings.openTransfer();screen=SCREEN_GAME;
+                    Serial.println("[sys] diagnostics: WIFI TRANSFER opened");
                 } else if (!strcmp(cmd, "Y")) {
                     if (active) active->leave();
                     active = &g_hypno;
@@ -326,6 +330,7 @@ void loop()
                         heap_caps_get_free_size(MALLOC_CAP_INTERNAL), ESP.getFreePsram(),
                         LCD_completedTransfers());
                     if(active==&g_music)g_music.printDiagnostics();
+                    if(active==&g_settings)g_settings.printDiagnostics();
                     if(active==&g_photos)g_photos.printDiagnostics();
                     if(active==&g_hypno)g_hypno.printDiagnostics();
                 } else if (!strcmp(cmd,"F")) {

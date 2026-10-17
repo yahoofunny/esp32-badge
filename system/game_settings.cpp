@@ -6,6 +6,7 @@
 #include <SD_MMC.h>
 #include <USB.h>
 #include <USBMSC.h>
+#include <BadgeTransfer.h>
 #include <esp_mac.h>
 #include <esp_ota_ops.h>
 #include <math.h>
@@ -18,6 +19,7 @@
 #include "power.h"
 #include "clock.h"
 #include "sound.h"
+#include "media.h"
 
 // ------------------------------------------------------------------ layout -----
 static const int HEAD_Y   = 30;       // the page title and the way back
@@ -41,11 +43,11 @@ static const int BTN_A_X  = 92, BTN_B_X = 268;
 static const int BTN_R    = 28;
 static const int HINT_Y   = 316;
 
-// Five settings pages on an arc, within the round screen's visible area.
+// Six settings pages on an arc, within the round screen's visible area.
 static const float MENU_R    = 116.0f;
-static const float MENU_SPAN = 140.0f;
+static const float MENU_SPAN = 160.0f;
 static const float MENU_HIT  = 32.0f;
-static const int   MENU_COUNT = 5;
+static const int   MENU_COUNT = 6;
 
 static const uint16_t COL_BG     = PX(RGB565(0x0E, 0x0E, 0x16));
 static const uint16_t COL_TEXT   = PX(RGB565(0xEC, 0xEC, 0xF4));
@@ -54,7 +56,7 @@ static const uint16_t COL_ACCENT = PX(RGB565(0xE0, 0xA8, 0x50));
 static const uint16_t COL_TRACK  = PX(RGB565(0x28, 0x28, 0x38));
 static const uint16_t COL_WARN   = PX(RGB565(0xE0, 0x50, 0x50));
 
-static const char *const MENU_LABEL[MENU_COUNT] = { "VOLUME", "SYSTEM", "NET", "USB", "POWER" };
+static const char *const MENU_LABEL[MENU_COUNT] = { "VOLUME", "SYSTEM", "NET", "USB", "POWER", "WIFI" };
 
 static bool inRect(int x, int y, int x0, int y0, int x1, int y1)
 {
@@ -313,7 +315,12 @@ void GameSettings::renderUsb()
 
 void GameSettings::enterPage(Page p)
 {
+    if(page==PAGE_TRANSFER && p!=PAGE_TRANSFER) {
+        badge_transfer::end();media::end();
+    }
     page = p;
+    transferFrameAt=0;
+    transferCardFailed=false;
     dragging = false;
     setDirty(0, SCR_H - 1);
 }
@@ -332,6 +339,7 @@ void GameSettings::leave()
     // Still handed to the host: nothing gets the serial port back except the reset this
     // does, and leaving with it taken would strand the board.
     if (usbStarted) usbStopAndReboot();
+    if(page==PAGE_TRANSFER){badge_transfer::end();media::end();}
     gfx::clear(COL_BG);
 }
 
@@ -416,9 +424,60 @@ void GameSettings::update(float dt)
     case PAGE_VOLUME: updateVolume(); break;
     case PAGE_USB:    updateUsb(); break;
     case PAGE_POWER:  updatePower(); break;
+    case PAGE_TRANSFER: updateTransfer(); break;
     default:          updateInfo(); break;
     }
     setDirty(0, SCR_H - 1);
+}
+
+void GameSettings::openTransfer() {
+    enterPage(PAGE_TRANSFER);
+    transferCardFailed=!media::begin();
+    if(!transferCardFailed)badge_transfer::begin();
+}
+void GameSettings::printDiagnostics() const {
+    if(page!=PAGE_TRANSFER)return;
+    badge_transfer::Status s;badge_transfer::status(s);
+    Serial.printf("[transfer] running=%d clients=%d busy=%d bytes=%u/%u saved=%u free=%llu status=%s\n",
+        s.running,s.clients,s.busy,s.bytes,s.total,s.completed,s.freeBytes,s.message);
+}
+void GameSettings::updateTransfer() {
+    if(!input::tapped())return;
+    const int x=input::tapX(),y=input::tapY();
+    if(inRect(x,y,BACK_X0,14,BACK_X1,48)){enterPage(PAGE_MENU);return;}
+    if(inRect(x,y,90,283,270,323)) {
+        badge_transfer::Status s;badge_transfer::status(s);
+        if(s.running){badge_transfer::end();media::end();}
+        else {transferCardFailed=!media::begin();if(!transferCardFailed)badge_transfer::begin();}
+        transferFrameAt=0;
+    }
+}
+void GameSettings::renderTransfer() {
+    const uint32_t now=millis();
+    if(transferFrameAt && uint32_t(now-transferFrameAt)<200){setDirty(1,0);return;}
+    transferFrameAt=now;
+    badge_transfer::Status s;badge_transfer::status(s);
+    gfx::clear(COL_BG);renderBack();
+    gfx::textCentered("WIFI TRANSFER",70,COL_ACCENT,2);
+    if(s.running) {
+        gfx::textCentered("CONNECT TO",103,COL_DIM,1);
+        gfx::textCentered(s.ssid,122,COL_TEXT,2);
+        gfx::textCentered("PASSWORD",154,COL_DIM,1);
+        gfx::textCentered(s.password,173,COL_ACCENT,2);
+        gfx::textCentered("OPEN IN BROWSER",205,COL_DIM,1);
+        gfx::textCentered("192.168.4.1",222,COL_TEXT,2);
+        char line[40];
+        if(s.busy)snprintf(line,sizeof line,"UPLOADING %u%%",s.total?unsigned(uint64_t(s.bytes)*100/s.total):0);
+        else snprintf(line,sizeof line,"%d CONNECTED  %u SAVED",s.clients,s.completed);
+        gfx::textCentered(line,255,COL_DIM,1);
+    } else {
+        gfx::textCentered("UPLOAD MUSIC + PHOTOS",133,COL_TEXT,1);
+        gfx::textCentered("from your phone or computer",157,COL_DIM,1);
+        gfx::textCentered("no router needed",181,COL_DIM,1);
+        gfx::textCentered(transferCardFailed?"SD CARD REQUIRED":s.message[0]?s.message:"START TO CONNECT",220,COL_DIM,1);
+    }
+    gfx::fillRect(90,283,180,40,COL_TRACK);
+    gfx::textCentered(s.running?"STOP":"START HOTSPOT",297,COL_ACCENT,1);
 }
 
 // ----------------------------------------------------------------- drawing ------
@@ -641,6 +700,7 @@ void GameSettings::render()
     case PAGE_NET:    renderNet(); break;
     case PAGE_USB:    renderUsb(); break;
     case PAGE_POWER:  renderPower(); break;
+    case PAGE_TRANSFER: renderTransfer(); break;
     }
 }
 
