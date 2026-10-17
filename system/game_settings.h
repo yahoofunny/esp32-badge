@@ -26,7 +26,7 @@ public:
 
 
 private:
-    enum Page { PAGE_MENU, PAGE_VOLUME, PAGE_SYSTEM, PAGE_NET, PAGE_USB };
+    enum Page { PAGE_MENU, PAGE_VOLUME, PAGE_SYSTEM, PAGE_NET, PAGE_USB, PAGE_POWER };
 
     Page page = PAGE_MENU;
 
@@ -48,12 +48,14 @@ private:
     void updateVolume();
     void updateInfo();      // the read-only pages: only BACK accepts a tap
     void updateUsb();
+    void updatePower();
 
     void renderMenu();
     void renderVolume();
     void renderSystem();
     void renderNet();
     void renderUsb();
+    void renderPower();
 
     // The way back, at the top centre. Not the top-left: at that height the round bezel
     // leaves nothing visible out there.

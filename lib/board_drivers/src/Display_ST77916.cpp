@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "esp_intr_alloc.h"
+#include "esp_heap_caps.h"
 #include "driver/spi_master.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_st77916.h"
@@ -12,6 +13,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 #define LCD_OPCODE_WRITE_CMD        (0x02ULL)
 #define LCD_OPCODE_READ_CMD         (0x0BULL)
@@ -434,24 +436,6 @@ void LCD_Init() {
   Touch_Init();
 }
 
-static void test_draw_bitmap(esp_lcd_panel_handle_t panel_handle)
-{
-  uint16_t row_line = ((EXAMPLE_LCD_WIDTH / EXAMPLE_LCD_COLOR_BITS) << 1) >> 1;
-  uint8_t byte_per_pixel = EXAMPLE_LCD_COLOR_BITS / 8;
-  uint8_t *color = (uint8_t *)heap_caps_calloc(1, row_line * EXAMPLE_LCD_HEIGHT * byte_per_pixel, MALLOC_CAP_DMA);
-
-
-  for (int j = 0; j < EXAMPLE_LCD_COLOR_BITS; j++) {
-      for (int i = 0; i < row_line * EXAMPLE_LCD_HEIGHT; i++) {
-          for (int k = 0; k < byte_per_pixel; k++) {
-              color[i * byte_per_pixel + k] = (SPI_SWAP_DATA_TX(BIT(j), EXAMPLE_LCD_COLOR_BITS) >> (k * 8)) & 0xff;
-          }
-      }
-      esp_lcd_panel_draw_bitmap(panel_handle, 0, j * row_line, EXAMPLE_LCD_HEIGHT, (j + 1) * row_line, color);
-  }
-  free(color);
-}
-
 esp_lcd_panel_handle_t panel_handle = NULL;
 
 /* ---------------------------------------------------------------- game path --
@@ -463,20 +447,35 @@ esp_lcd_panel_handle_t panel_handle = NULL;
  *
  * The helpers below instead let the game own a framebuffer whose pixels are
  * already in panel byte order, and push it without the driver touching it.
- * The pixel transfer is queued asynchronously (trans_queue_depth is 10), so
- * LCD_waitTrans() must be called before drawing into the buffer again.
+ * PSRAM frames are copied into one small internal DMA buffer. Only one strip is
+ * in flight, and it completes before that buffer is reused.
  */
 volatile uint32_t lcd_trans_done_count = 0;
+static SemaphoreHandle_t lcd_trans_signal = NULL;
+static constexpr int LCD_DMA_ROWS = 8;
+static uint16_t *lcd_dma_strip = NULL;
+static uint32_t lcd_pending_target = 0;
+static bool lcd_pending = false;
 
 static bool lcd_on_color_trans_done(esp_lcd_panel_io_handle_t io,
                                     esp_lcd_panel_io_event_data_t *edata,
                                     void *user_ctx)
 {
   lcd_trans_done_count++;
-  return false;
+  BaseType_t task_woken = pdFALSE;
+  if (lcd_trans_signal) xSemaphoreGiveFromISR(lcd_trans_signal, &task_woken);
+  return task_woken == pdTRUE;
 }
 
 int QSPI_Init(void){
+  lcd_trans_signal = xSemaphoreCreateBinary();
+  lcd_dma_strip = (uint16_t *)heap_caps_malloc(
+      EXAMPLE_LCD_WIDTH * LCD_DMA_ROWS * sizeof(uint16_t),
+      MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+  if (!lcd_trans_signal || !lcd_dma_strip) {
+    printf("[lcd] cannot allocate DMA strip buffer\n");
+    return 0;
+  }
   static const spi_bus_config_t host_config = {            
     .data0_io_num = ESP_PANEL_LCD_SPI_IO_DATA0,                    
     .data1_io_num = ESP_PANEL_LCD_SPI_IO_DATA1,                   
@@ -544,7 +543,10 @@ int QSPI_Init(void){
   } else {
     printf("Failed to read register 0x04, error code: %d\n", ret);
   } 
-  // panel_io_spi_del(io_handle);
+  // The low-speed probe is finished. Release its SPI device and transaction
+  // queue before installing the display's normal-speed device.
+  ESP_ERROR_CHECK(esp_lcd_panel_io_del(io_handle));
+  io_handle = NULL;
   io_config.pclk_hz = ESP_PANEL_LCD_SPI_CLK_HZ;
   if(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)ESP_PANEL_HOST_SPI_ID_DEFAULT, &io_config, &io_handle) != ESP_OK){
     printf("Failed to set LCD communication parameters -- SPI\r\n");
@@ -581,7 +583,6 @@ int QSPI_Init(void){
   // esp_lcd_panel_invert_color(panel_handle,false);
 
   esp_lcd_panel_disp_on_off(panel_handle, true);
-  test_draw_bitmap(panel_handle);
   return 1;
 }
 
@@ -613,60 +614,69 @@ void LCD_addWindow(uint16_t Xstart, uint16_t Ystart, uint16_t Xend, uint16_t Yen
   esp_lcd_panel_draw_bitmap(panel_handle, Xstart, Ystart, Xend, Yend, color);                     // x_end End index on x-axis (x_end not included)
 }
 
-/* Draw a rectangle, retrying a few times and saying so when it keeps failing. The
- * colour transfers are asynchronous and have been seen to be rejected outright
- * ("spi transmit (queue) color failed"); after that nothing updates and nothing
- * explains why -- the screen keeps the last frame it managed to show, which looks
- * exactly like a hung badge even though everything else is running. */
-static bool lcd_draw_checked(int x0, int y0, int x1, int y1, const uint16_t *buf,
-                             const char *what)
+static bool lcd_wait_pending()
 {
-  for (int attempt = 1; attempt <= 3; attempt++) {
-    esp_err_t err = esp_lcd_panel_draw_bitmap(panel_handle, x0, y0, x1, y1, buf);
-    if (err == ESP_OK) return true;
-    printf("[lcd] %s push failed (attempt %d: %s)\n", what, attempt, esp_err_to_name(err));
-    vTaskDelay(pdMS_TO_TICKS(10));
+  if (!lcd_pending) return true;
+  const uint32_t start = millis();
+  while ((int32_t)(lcd_trans_done_count - lcd_pending_target) < 0) {
+    if (millis() - start >= 250) {
+      // Keep the buffer reserved: a late DMA completion must not read pixels
+      // from a new frame. A later call may recover once that completion arrives.
+      printf("[lcd] DMA strip timed out\n");
+      return false;
+    }
+    xSemaphoreTake(lcd_trans_signal, pdMS_TO_TICKS(10));
   }
-  return false;
+  lcd_pending = false;
+  return true;
 }
 
-/* Push the whole panel from a framebuffer whose pixels are ALREADY in panel byte
- * order (i.e. byte-swapped relative to a native uint16_t RGB565). The buffer is
- * not modified. Returns immediately -- the DMA still owns the buffer, so call
- * LCD_waitTrans() before writing to it again. */
+static void lcd_push_rows(int y0, int y1, const uint16_t *fb)
+{
+  if (!panel_handle || !lcd_dma_strip || !lcd_wait_pending()) return;
+  for (int y = y0; y <= y1; y += LCD_DMA_ROWS) {
+    const int rows = (y1 - y + 1 < LCD_DMA_ROWS) ? y1 - y + 1 : LCD_DMA_ROWS;
+    memcpy(lcd_dma_strip, fb + (size_t)y * EXAMPLE_LCD_WIDTH,
+           rows * EXAMPLE_LCD_WIDTH * sizeof(uint16_t));
+    while (xSemaphoreTake(lcd_trans_signal, 0) == pdTRUE) {}
+    // Capture the target BEFORE queuing: a short transfer may finish before the
+    // caller starts waiting. Waiting for count+1 afterwards loses that event.
+    lcd_pending_target = lcd_trans_done_count + 1;
+    const esp_err_t err = esp_lcd_panel_draw_bitmap(
+        panel_handle, 0, y, EXAMPLE_LCD_WIDTH, y + rows, lcd_dma_strip);
+    if (err != ESP_OK) {
+      printf("[lcd] rows %d..%d rejected: %s\n", y, y + rows - 1, esp_err_to_name(err));
+      return;
+    }
+    lcd_pending = true;
+    if (!lcd_wait_pending()) return;
+  }
+}
+
+// Pixels are already in panel byte order; the persistent framebuffer is never
+// modified. Each call finishes its DMA transfers before returning.
 void LCD_pushFull(const uint16_t *fb)
 {
-  lcd_draw_checked(0, 0, EXAMPLE_LCD_WIDTH, EXAMPLE_LCD_HEIGHT, fb, "full");
+  lcd_push_rows(0, EXAMPLE_LCD_HEIGHT - 1, fb);
 }
 
-/* Push full-width rows y0..y1 inclusive. The rows are contiguous in `fb` (which
- * must be a full W x H framebuffer), so this is the cheap way to refresh only the
- * parts of the screen a moving sprite has touched. Same byte-order contract and
- * same async caveat as LCD_pushFull(). */
+// Full-width rows y0..y1 inclusive, from a full W x H framebuffer.
 void LCD_pushBand(int y0, int y1, const uint16_t *fb)
 {
   if (y0 < 0) y0 = 0;
   if (y1 > EXAMPLE_LCD_HEIGHT - 1) y1 = EXAMPLE_LCD_HEIGHT - 1;
   if (y1 < y0) return;
-  lcd_draw_checked(0, y0, EXAMPLE_LCD_WIDTH, y1 + 1,
-                   fb + (size_t)y0 * EXAMPLE_LCD_WIDTH, "band");
+  lcd_push_rows(y0, y1, fb);
 }
 
-/* Block until every queued pixel transfer has finished -- but not forever. A
- * transfer that never completes (the queue rejects it and no callback ever comes)
- * used to spin here for good, which turns one bad frame into a dead badge: the
- * screen stops updating and nothing says why. */
 void LCD_waitTrans(void)
 {
-  uint32_t target = lcd_trans_done_count + 1;
-  uint32_t start = millis();
-  while (lcd_trans_done_count < target) {
-    if (millis() - start > 250) {
-      printf("[lcd] transfer never completed; continuing\n");
-      return;
-    }
-    vTaskDelay(1);
-  }
+  lcd_wait_pending();
+}
+
+uint32_t LCD_completedTransfers(void)
+{
+  return lcd_trans_done_count;
 }
 
 

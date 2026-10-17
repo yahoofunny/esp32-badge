@@ -46,7 +46,8 @@ void LCD_addWindow(uint16_t Xstart, uint16_t Ystart, uint16_t Xend, uint16_t Yen
 void LCD_pushFull(const uint16_t *fb);
 void LCD_pushBand(int y0, int y1, const uint16_t *fb);
 void LCD_waitTrans(void);
+uint32_t LCD_completedTransfers(void);
 
 // backlight
 void Backlight_Init();
-void Set_Backlight(uint8_t Light);  
+void Set_Backlight(uint8_t Light);

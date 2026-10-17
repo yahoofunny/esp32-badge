@@ -956,9 +956,7 @@ static esp_err_t panel_st77916_draw_bitmap(esp_lcd_panel_t *panel, int x_start, 
     }, 4), TAG, "send command failed");
     // transfer frame buffer
     size_t len = (x_end - x_start) * (y_end - y_start) * st77916->fb_bits_per_pixel / 8;
-    tx_color(st77916, io, LCD_CMD_RAMWR, color_data, len);
-
-    return ESP_OK;
+    return tx_color(st77916, io, LCD_CMD_RAMWR, color_data, len);
 }
 
 static esp_err_t panel_st77916_invert_color(esp_lcd_panel_t *panel, bool invert_color_data)

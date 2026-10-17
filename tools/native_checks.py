@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
 TESTS={
+    'power_status':['tests/power_status_test.cpp'],
     'photo_blit':['tests/photo_blit_test.cpp'],
     'launcher_drag':['tests/launcher_drag_test.cpp','system/gfx.cpp'],
     'pet_state':['tests/pet_state_test.cpp','system/game_pet.cpp','system/gfx.cpp','system/outfits.cpp'],

@@ -41,11 +41,11 @@ static const int BTN_A_X  = 92, BTN_B_X = 268;
 static const int BTN_R    = 28;
 static const int HINT_Y   = 316;
 
-// The menu: three items on an arc, the shape this round screen keeps asking for.
+// Five settings pages on an arc, within the round screen's visible area.
 static const float MENU_R    = 116.0f;
-static const float MENU_SPAN = 120.0f;
+static const float MENU_SPAN = 140.0f;
 static const float MENU_HIT  = 32.0f;
-static const int   MENU_COUNT = 4;
+static const int   MENU_COUNT = 5;
 
 static const uint16_t COL_BG     = PX(RGB565(0x0E, 0x0E, 0x16));
 static const uint16_t COL_TEXT   = PX(RGB565(0xEC, 0xEC, 0xF4));
@@ -54,7 +54,7 @@ static const uint16_t COL_ACCENT = PX(RGB565(0xE0, 0xA8, 0x50));
 static const uint16_t COL_TRACK  = PX(RGB565(0x28, 0x28, 0x38));
 static const uint16_t COL_WARN   = PX(RGB565(0xE0, 0x50, 0x50));
 
-static const char *const MENU_LABEL[MENU_COUNT] = { "VOLUME", "SYSTEM", "NET", "USB" };
+static const char *const MENU_LABEL[MENU_COUNT] = { "VOLUME", "SYSTEM", "NET", "USB", "POWER" };
 
 static bool inRect(int x, int y, int x0, int y0, int x1, int y1)
 {
@@ -415,6 +415,7 @@ void GameSettings::update(float dt)
     case PAGE_MENU:   updateMenu(); break;
     case PAGE_VOLUME: updateVolume(); break;
     case PAGE_USB:    updateUsb(); break;
+    case PAGE_POWER:  updatePower(); break;
     default:          updateInfo(); break;
     }
     setDirty(0, SCR_H - 1);
@@ -450,10 +451,37 @@ void GameSettings::renderMenu()
 
     const power::Reading b = power::cached();
     char line[32];
-    if (b.valid) snprintf(line, sizeof(line), "battery %d%%", b.percent);
+    if (b.valid) snprintf(line, sizeof(line), "%s %d%%", power::stateText(b.state), b.percent);
     else         snprintf(line, sizeof(line), "battery --");
     gfx::textCentered(line, 62, b.valid && b.percent < 20 ? COL_WARN
                                                           : COL_DIM, 1);
+}
+
+void GameSettings::updatePower()
+{
+    if (!input::tapped()) return;
+    const int x=input::tapX(),y=input::tapY();
+    if (inRect(x,y,BACK_X0,14,BACK_X1,48)) enterPage(PAGE_MENU);
+    else if (inRect(x,y,78,226,282,270)) power::requestChargeOnly();
+}
+
+void GameSettings::renderPower()
+{
+    gfx::clear(COL_BG);renderBack();
+    const auto b=power::cached();
+    gfx::textCentered("POWER",72,COL_ACCENT,2);
+    char text[32];
+    if (b.valid) snprintf(text,sizeof(text),"%d%%",b.percent);else snprintf(text,sizeof(text),"--");
+    gfx::textCentered(text,114,COL_TEXT,4);
+    gfx::textCentered(power::stateText(b.state),166,COL_ACCENT,1);
+    if (b.valid && b.state!=power::ChargeState::Unknown) {
+        snprintf(text,sizeof(text),"%d mV  %+d mA",b.millivolts,b.milliamps);
+        gfx::textCentered(text,188,COL_DIM,1);
+    }
+    gfx::fillRect(78,226,204,44,COL_TRACK);
+    gfx::textCentered("CHARGE ONLY",241,COL_ACCENT,2);
+    gfx::textCentered("screen + radio sleep",287,COL_DIM,1);
+    gfx::textCentered("BOOT wakes the badge",310,COL_DIM,1);
 }
 
 void GameSettings::renderVolume()
@@ -609,7 +637,8 @@ void GameSettings::render()
     case PAGE_VOLUME: renderVolume(); break;
     case PAGE_SYSTEM: renderSystem(); break;
     case PAGE_NET:    renderNet(); break;
-    default:          renderUsb(); break;
+    case PAGE_USB:    renderUsb(); break;
+    case PAGE_POWER:  renderPower(); break;
     }
 }
 

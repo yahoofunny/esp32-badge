@@ -7,6 +7,7 @@
 - **20 种像素配饰**：花朵、安全帽、耳机、巫师帽等叠加在原身体上，体型和比例保持一致；衣柜支持预览、取消和保存。
 - **手指拖转主页**：沿应用圆环滑动，松手吸附，点击打开；主页没有左上角时钟。
 - **满屏相册**：默认等比居中裁剪铺满，长按约 **650ms** 切换完整显示，再长按恢复铺满。
+- **充电状态与仅充电模式**：SETTINGS → POWER 显示实际充电状态；CHARGE ONLY 熄屏休眠，按 BOOT 唤醒。
 - **触摸与绘制分开调度**：输入目标 **20ms**，本机实测约 **30ms**；省电只降低绘制频率，按下即唤醒并高亮，松手执行一次，反馈保留约 **150ms**。
 
 实机验证：主页拖转、桌宠互动、语音联网对话和相册显示已通过，触摸操作顺畅；扫描间隔会随运行负载变化。
@@ -175,12 +176,18 @@ python tools/native_checks.py      # execute real shared C++ logic on the host; 
 python tools/preview_pet.py        # render the shared pet code; also needs Pillow
 python tools/preview_launcher.py   # Python preview of the launcher layout
 python tools/preview_readme.py     # regenerate README images from actual C++ drawing; needs Pillow
+python tools/preview_power.py      # render the POWER page with a charging fixture
 ```
 
 Checks cover photo scaling and crop boundaries, ring dragging and snapping,
 save migration, care, wardrobe persistence, accessory clipping in both RGB565 byte
-orders, button press/release feedback and UI pacing across timer wrap. Host renders
+orders, button press/release feedback, BQ27220 charging state and UI pacing across timer wrap. Host renders
 complement device checks; they do not measure LCD transfer or touch-controller latency.
+
+The launcher's LCD path copies PSRAM pixels into a reusable 8-row internal DMA
+buffer and waits for each strip before reusing it. This avoids the failed large
+transfers that left stale red bands on screen. Serial `D` includes a completed
+transfer counter; transfer errors and timeouts are reported instead of ignored.
 
 ## The system
 
@@ -217,15 +224,22 @@ Each module draws its own icon; the pet has one entry for both care and voice.
 CLAWD PET keeps its classic orange launcher icon; inside the app, the creature's
 body color continues to follow its current evolution form.
 
-The battery sits in the top right, read from the BQ27220 gauge on the I2C bus rather
-than guessed from an ADC pin: it reports a state of charge and a pack voltage, and it
-turns red under 20%.
+Battery voltage, percentage, signed current and BatteryStatus come from the BQ27220
+gauge. SETTINGS → POWER shows CHARGING, FULL or CHARGE PAUSED.
+A cable connection or 100% reading alone is not treated as proof
+of charging or completed charging; failed status reads show STATUS UNKNOWN.
 
-**SETTINGS** has VOLUME, SYSTEM, NET and USB pages behind a small arc menu. VOLUME is the assistant's level,
+**SETTINGS** has VOLUME, SYSTEM, NET, USB and POWER pages behind a small arc menu. VOLUME is the assistant's level,
 kept in the NVS key its own AudioCodec::Start() reads — see system/audio.h for why that
 key and not the codec's register, which the assistant rewrites on every boot. SYSTEM is
 the chip, memory, build and battery; NET shows stored assistant configuration. USB
 provides the SD-card access mode. The integrated voice pet handles assistant networking.
+
+**仅充电：SETTINGS → POWER → CHARGE ONLY。** 页面显示当前电量与充电状态，随后关闭背光与显示输出，让主控和无线硬件进入深度休眠；按 **BOOT** 唤醒。电池充电仍由板载充电芯片独立控制，没有提高充电电流或修改电池参数。休眠时 USB 串口会断开，烧录前先按 BOOT 唤醒。
+
+USB 插入后会自动给主板供电；插线时 PWR 的关机请求无法切断 VBUS 供电。这是板卡电源路径行为，见 [板厂 FAQ](https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85B/FAQ)。仅充电模式用于减少运行耗电，实际充电速度仍受充电芯片、电池阶段和 USB 供电限制。
+
+<img src="docs/images/power.png" width="240" alt="POWER 仅充电页面，实际 C++ 渲染，84% 为演示电量">
 
 **Controls.** Drag a finger around the application ring to rotate it; release to snap
 to the nearest app. Tap an icon or the centre to open it. Tilt remains optional and

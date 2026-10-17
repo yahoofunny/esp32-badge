@@ -27,6 +27,9 @@
 #include "esp_heap_caps.h"
 #include "esp_ota_ops.h"
 #include "esp_random.h"
+#include "esp_sleep.h"
+#include "driver/rtc_io.h"
+#include "driver/gpio.h"
 #include "game.h"
 #include "game_clawd.h"
 #include "game_pet.h"
@@ -38,6 +41,7 @@
 #include "input.h"
 #include "launcher.h"
 #include "clock.h"
+#include "charge_sleep.h"
 #include "power.h"
 #include "sound.h"
 
@@ -139,9 +143,15 @@ static void showSplash()
 
 void setup()
 {
+    // Release the pads retained by charge-only sleep before restarting drivers.
+    gpio_deep_sleep_hold_dis();
+    gpio_hold_dis(GPIO_NUM_5);gpio_hold_dis(GPIO_NUM_9);gpio_hold_dis(GPIO_NUM_3);
+    rtc_gpio_deinit(GPIO_NUM_0);
     Serial.begin(115200);
     delay(150);
     Serial.println("\n[esp32-badge] booting");
+    if (esp_sleep_get_wakeup_cause()==ESP_SLEEP_WAKEUP_EXT0)
+        Serial.println("[power] charge-only wake: BOOT");
 
     // The I2C bus has to be up before LCD_Init(), because LCD_Init() calls
     // Touch_Init(), which talks to the touch controller. Without this the controller
@@ -243,10 +253,15 @@ void loop()
                     screen = SCREEN_LAUNCHER;
                     Serial.println("[sys] diagnostics: launcher");
                 } else if (!strcmp(cmd, "D")) {
-                    Serial.printf("[sys] screen=%s app=%s heap=%u internal=%u psram=%u\n",
+                    Serial.printf("[sys] screen=%s app=%s heap=%u internal=%u psram=%u lcd=%u\n",
                         screen == SCREEN_LAUNCHER ? "launcher" : "app",
                         active ? active->name() : "none", ESP.getFreeHeap(),
-                        heap_caps_get_free_size(MALLOC_CAP_INTERNAL), ESP.getFreePsram());
+                        heap_caps_get_free_size(MALLOC_CAP_INTERNAL), ESP.getFreePsram(),
+                        LCD_completedTransfers());
+                } else if (!strcmp(cmd, "B")) {
+                    const auto b=power::cached();
+                    Serial.printf("[power] %s valid=%d %d%% %dmV %+dmA flags=%04x\n",
+                        power::stateText(b.state),b.valid,b.percent,b.millivolts,b.milliamps,b.batteryStatus);
                 }
                 n = 0;
             } else if (n < 23) {
@@ -278,6 +293,11 @@ void loop()
         active->render();
         bandY0 = active->dirtyY0;
         bandY1 = active->dirtyY1;
+    }
+
+    if (power::chargeOnlyRequested()) {
+        if (active) active->leave();
+        charge_sleep::enter();
     }
 
     drawHoldIndicator(input::bootHeldMs(),
