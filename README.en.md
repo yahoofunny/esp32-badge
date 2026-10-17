@@ -805,7 +805,7 @@ header. Details in [docs/hardware.md](docs/hardware.md).
 ## Coworkers
 
 - **[yahoofunny](https://github.com/yahoofunny)**: project concept, requirements and interaction design, device testing and feedback.
-- **Codex (OpenAI)**: AI coding collaborator for firmware development, debugging, performance improvements, regression checks and documentation.
+- **[Codex](https://github.com/codex) (OpenAI)**: AI coding collaborator for firmware development, debugging, performance improvements, regression checks and documentation.
 
 ## License
 
