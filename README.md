@@ -704,6 +704,11 @@ esptool --chip esp32s3 --port COM3 --baud 921600 --after watchdog_reset write_fl
 - [ ] 更长时间的续航及语音/养成同时运行测试
 - [ ] 更广泛的媒体文件和 SD 卡兼容性检查
 
+## 协作者
+
+- **[yahoofunny](https://github.com/yahoofunny)**：项目创意、需求与交互设计、实机测试和反馈。
+- **Codex（OpenAI）**：AI 编程协作者，参与固件开发、问题排查、性能优化、回归验证与文档整理。
+
 <a id="license"></a>
 
 ## 许可证

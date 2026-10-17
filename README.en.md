@@ -802,6 +802,11 @@ header. Details in [docs/hardware.md](docs/hardware.md).
 - [ ] Longer battery-life and simultaneous voice/care soak tests
 - [ ] Broader media-file and SD-card compatibility checks
 
+## Coworkers
+
+- **[yahoofunny](https://github.com/yahoofunny)**: project concept, requirements and interaction design, device testing and feedback.
+- **Codex (OpenAI)**: AI coding collaborator for firmware development, debugging, performance improvements, regression checks and documentation.
+
 ## License
 
 **AGPL-3.0** — see [LICENSE](LICENSE), and [NOTICE.md](NOTICE.md) for the third-party
