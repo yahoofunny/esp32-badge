@@ -154,6 +154,10 @@ public:
     uint8_t getVolume();
     uint8_t maxVolume();
     uint8_t getI2sPort();
+    // Count frames accepted by the peripheral, not merely observed by a hook.
+    uint32_t getI2SSamplesWritten() const {return m_i2s_samples_written;}
+    uint32_t getI2SNonzeroSamplesWritten() const {return m_i2s_nonzero_written;}
+    uint32_t getI2SWriteErrors() const {return m_i2s_write_errors;}
 
     uint32_t getAudioDataStartPos();
     uint32_t getFileSize();
@@ -573,6 +577,9 @@ private:
     float           m_filterBuff[3][2][2][2];       // IIR filters memory for Audio DSP
     float           m_corr = 1.0;					// correction factor for level adjustment
     size_t          m_i2s_bytesWritten = 0;         // set in i2s_write() but not used
+    uint32_t        m_i2s_samples_written = 0;
+    uint32_t        m_i2s_nonzero_written = 0;
+    uint32_t        m_i2s_write_errors = 0;
     size_t          m_file_size = 0;                // size of the file
     uint16_t        m_filterFrequency[2];
     int8_t          m_gain0 = 0;                    // cut or boost filters (EQ)

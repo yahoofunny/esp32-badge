@@ -2,6 +2,8 @@
 #include <Arduino.h>
 #include <SD_MMC.h>
 #include <BadgeAudio.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
 #include <math.h>
 #include <string.h>
 #include "audio.h"
@@ -17,10 +19,26 @@ static const uint16_t COL_TRACK=PX(RGB565(0x28,0x22,0x2B));
 static const char *const MUSIC_EXTS[]={"mp3","wav","m4a","aac","flac","ogg"};
 static bool songFinished=false;
 static uint32_t pcmSamples=0,nonzeroSamples=0;
+// The decoder must keep feeding DMA while the UI draws or waits for the LCD.
+// All player/SD access shares this recursive lock, including track changes.
+struct MusicPump {
+    SemaphoreHandle_t lock=nullptr,stopped=nullptr;
+    TaskHandle_t task=nullptr;
+    uint32_t lastCallUs=0,maxCallUs=0,maxGapUs=0;
+};
+struct MusicGuard {
+    MusicPump *pump;
+    explicit MusicGuard(MusicPump *p):pump(p) {
+        if(pump && pump->lock)xSemaphoreTakeRecursive(pump->lock,portMAX_DELAY);
+    }
+    ~MusicGuard(){if(pump && pump->lock)xSemaphoreGiveRecursive(pump->lock);}
+};
 void audio_eof_mp3(const char*){songFinished=true;}
 void audio_info(const char *message){Serial.printf("[music-audio] %.180s\n",message);}
-void audio_process_i2s(uint32_t *sample,bool*) {
+void audio_process_i2s(uint32_t *sample,bool *continueI2S) {
     ++pcmSamples;if(*sample)++nonzeroSamples;
+    // The library defaults this flag to false: observing must not consume audio.
+    *continueI2S=true;
 }
 
 // An original eight-second chiptune gives an empty card something to play.
@@ -78,20 +96,59 @@ void GameMusic::enter() {
         if(!tracks && createDemo())tracks=media::list(media::MUSIC_DIR,MUSIC_EXTS,6);
     }
     if(!tracks)return;
+    pump=new MusicPump;
+    pump->lock=xSemaphoreCreateRecursiveMutex();
+    pump->stopped=xSemaphoreCreateBinary();
+    if(!pump->lock || !pump->stopped){failed=true;return;}
     player=new Audio(false,3,I2S_NUM_0);
     player->setBufsize(8192,128*1024);
     if(!player->setPinout(48,38,47,2)){failed=true;return;}
     player->forceMono(true);player->setVolume(21);
     playCurrent();
+    if(xTaskCreatePinnedToCore(pumpAudio,"badge-music",8192,this,2,&pump->task,0)!=pdPASS) {
+        failed=true;player->stopSong();digitalWrite(9,LOW);
+        Serial.println("[music] audio task could not start");
+    }
+}
+void GameMusic::pumpAudio(void *context) {
+    auto &music=*static_cast<GameMusic*>(context);
+    for(;;) {
+        if(ulTaskNotifyTake(pdTRUE,0))break;
+        {
+            MusicGuard guard(music.pump);
+            const uint32_t started=micros();
+            auto &p=*music.pump;
+            if(p.lastCallUs)p.maxGapUs=max(p.maxGapUs,uint32_t(started-p.lastCallUs));
+            if(music.player)music.player->loop();
+            p.lastCallUs=micros();
+            p.maxCallUs=max(p.maxCallUs,uint32_t(p.lastCallUs-started));
+        }
+        // DMA writes are nonblocking. Yield on a full buffer so core 0's idle
+        // task and USB/system work run as well; never spin at audio priority.
+        vTaskDelay(1);
+    }
+    // Acknowledge before leave() deletes the decoder or unmounts the card.
+    xSemaphoreGive(music.pump->stopped);
+    vTaskDelete(nullptr);
 }
 void GameMusic::leave() {
     digitalWrite(9,LOW);
+    if(pump && pump->task) {
+        xTaskNotifyGive(pump->task);
+        xSemaphoreTake(pump->stopped,portMAX_DELAY);
+    }
     if(player){player->stopSong();delete player;player=nullptr;}
+    if(pump) {
+        if(pump->lock)vSemaphoreDelete(pump->lock);
+        if(pump->stopped)vSemaphoreDelete(pump->stopped);
+        delete pump;pump=nullptr;
+    }
     media::end();
     const bool ok=sound::begin();
     Serial.printf("[music] returned audio to launcher=%d\n",ok);
 }
 void GameMusic::playCurrent() {
+    MusicGuard guard(pump);
     if(!player || tracks<=0)return;
     songFinished=false;elapsed=duration=0;paused=false;
     failed=!player->connecttoFS(SD_MMC,media::pathAt(index));
@@ -104,23 +161,37 @@ void GameMusic::playCurrent() {
     Serial.printf("[music] %d/%d %s: %s\n",index+1,tracks,media::nameAt(index),failed?"FAILED":"playing");
 }
 void GameMusic::nextTrack(int direction) {
+    MusicGuard guard(pump);
     if(!tracks)return;
     index=(index+(direction<0?tracks-1:1))%tracks;playCurrent();
 }
 void GameMusic::togglePlayback() {
+    MusicGuard guard(pump);
     if(!player || !tracks)return;
     if(failed || (!paused && !player->isRunning()))playCurrent();
     else if(player->pauseResume())paused=!paused;
     redraw=true;
 }
+bool GameMusic::setVolumePercent(int percent,bool remember) {
+    const int next=constrain(percent,0,100);
+    if(!audio::setVolume(next))return false;
+    volume=next;
+    if(remember)audio::storeVolume(volume);
+    redraw=true;return true;
+}
 void GameMusic::printDiagnostics() const {
-    Serial.printf("[music] track=%d/%d running=%d paused=%d error=%d time=%u/%u rate=%u pcm=%u nonzero=%u\n",
+    MusicGuard guard(pump);
+    Serial.printf("[music] track=%d/%d running=%d paused=%d error=%d time=%u/%u rate=%u pcm=%u nonzero=%u i2s_written=%u i2s_nonzero=%u i2s_errors=%u volume=%d amp=%d uptime_ms=%u pump_max_us=%u pump_gap_us=%u stack_free=%u\n",
         index+1,tracks,player&&player->isRunning(),paused,failed,elapsed,duration,
-        player?player->getSampleRate():0,pcmSamples,nonzeroSamples);
+        player?player->getSampleRate():0,pcmSamples,nonzeroSamples,
+        player?player->getI2SSamplesWritten():0,player?player->getI2SNonzeroSamplesWritten():0,
+        player?player->getI2SWriteErrors():0,audio::volume(),digitalRead(9),millis(),
+        pump?pump->maxCallUs:0,pump?pump->maxGapUs:0,
+        pump&&pump->task?uxTaskGetStackHighWaterMark(pump->task):0);
 }
 void GameMusic::update(float dt) {
     if(player) {
-        player->loop();
+        MusicGuard guard(pump);
         elapsed=player->getAudioCurrentTime();duration=player->getAudioFileDuration();
         if(songFinished){songFinished=false;nextTrack();}
     }
@@ -137,9 +208,9 @@ void GameMusic::update(float dt) {
             else if(startTarget==1)togglePlayback();
             else if(startTarget==2)nextTrack();
             else if(startTarget==3 || startTarget==4) {
-                volume+=startTarget==3?-10:10;volume=constrain(volume,0,100);
-                audio::setVolume(volume);audio::storeVolume(volume);redraw=true;
+                setVolumePercent(volume+(startTarget==3?-10:10));
             } else if(startTarget==5 && player && duration>0) {
+                MusicGuard guard(pump);
                 const int x=constrain(input::tapX(),66,294);
                 player->setAudioPlayPosition(uint16_t((x-66)*duration/228));redraw=true;
             }

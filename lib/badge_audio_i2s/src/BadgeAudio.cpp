@@ -4998,12 +4998,14 @@ bool Audio::playSample(int16_t sample[2]) {
     esp_err_t err = i2s_write((i2s_port_t)m_i2s_num, (const char*)&s32, sizeof(uint32_t), &m_i2s_bytesWritten, 0); // no wait
 #endif
     if(err != ESP_OK) {
-        if(err != 263) { log_e("ESP32 Errorcode: %i", err); }
+        if(err != 263) { ++m_i2s_write_errors; log_e("ESP32 Errorcode: %i", err); }
         return false;
     }
     if(m_i2s_bytesWritten < 4) { // no more space in dma buffer  --> break and try it later
         return false;
     }
+    ++m_i2s_samples_written;
+    if(s32)++m_i2s_nonzero_written;
     return true;
 }
 //------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------

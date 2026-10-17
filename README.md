@@ -327,7 +327,17 @@ created as `/Music/Badge-Loop.wav`; existing user tracks are not replaced.
 Hold BOOT for about 900ms to return home. Entering/exiting releases and restores
 the I2S driver without a reboot; the local decoder fork uses the ES8311's 256fs
 MCLK and disables its IDF 5 channel before deleting it. Serial `M` opens the player,
-`V` pauses/resumes, `N` / `J` change tracks and `D` reports playback time and PCM counters.
+`V` pauses/resumes and `N` / `J` change tracks. Decoding and I2S output run in a
+separate core-0 task so LCD transfers and touch polling cannot starve playback.
+Player/SD operations are serialized; exit waits for the worker before deleting the
+decoder, unmounting the card and restoring launcher audio.
+
+The PCM observer explicitly forwards samples to I2S. Serial `D` distinguishes
+callback attempts from complete stereo frames accepted by I2S, and reports write
+errors, worker timing and remaining stack. `U40` temporarily sets the shared codec
+volume to 40% without saving it. On the physical board, a 44.1kHz/128kbps stereo MP3
+delivered approximately 44,100 stereo frames per second with the music animation
+running, versus approximately 28,000 when decoding ran once per UI loop.
 
 **HYPNO.** Shake the badge left/right to drive the gold pocket watch. It uses the
 QMI8658 acceleration sample already read by the input loop, with an inertial pendulum

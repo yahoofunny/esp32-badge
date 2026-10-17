@@ -315,6 +315,10 @@ void loop()
                     Serial.println("[sys] diagnostics: MUSIC opened");
                 } else if (!strcmp(cmd, "V")) {
                     if(active==&g_music)g_music.togglePlayback();
+                } else if (n>1 && cmd[0]=='U') {
+                    const int volume=constrain(atoi(cmd+1),0,100);
+                    const bool ok=active==&g_music?g_music.setVolumePercent(volume,false):audio::setVolume(volume);
+                    Serial.printf("[music] temporary volume=%d ok=%d\n",volume,ok);
                 } else if (!strcmp(cmd, "D")) {
                     Serial.printf("[sys] screen=%s app=%s heap=%u internal=%u psram=%u lcd=%u\n",
                         screen == SCREEN_LAUNCHER ? "launcher" : "app",
