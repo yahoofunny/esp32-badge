@@ -11,7 +11,7 @@
 // battery charging from merely having a USB cable connected.
 namespace power {
 
-// Called from the frame loop. The gauge is sampled at most every couple of seconds
+// Called from the frame loop. The gauge is sampled at most once a second
 // rather than per frame: the bus is shared with the touch controller and the IMU, and
 // the charge level does not change faster than that.
 void poll(uint32_t nowMs);
@@ -20,5 +20,7 @@ void poll(uint32_t nowMs);
 Reading cached();
 void requestChargeOnly();
 bool chargeOnlyRequested();
+// Read-only serial diagnostics, including USB transitions across cable removal.
+void printDiagnostics();
 
 }  // namespace power

@@ -7,7 +7,7 @@
 - **20 种像素配饰**：花朵、安全帽、耳机、巫师帽等叠加在原身体上，体型和比例保持一致；衣柜支持预览、取消和保存。
 - **手指拖转主页**：沿应用圆环滑动，松手吸附，点击打开；主页没有左上角时钟。
 - **满屏相册**：默认等比居中裁剪铺满，长按约 **650ms** 切换完整显示，再长按恢复铺满。
-- **充电状态与仅充电模式**：SETTINGS → POWER 显示实际充电状态；CHARGE ONLY 熄屏休眠，按 BOOT 唤醒。
+- **USB 连接提示与省电休眠**：SETTINGS → POWER 的电脑连接提示已通过插拔测试；CHARGE ONLY 熄屏休眠，按 BOOT 唤醒。充电状态判断仍有下述未解决问题。
 - **触摸与绘制分开调度**：输入目标 **20ms**，本机实测约 **30ms**；省电只降低绘制频率，按下即唤醒并高亮，松手执行一次，反馈保留约 **150ms**。
 
 实机验证：主页拖转、桌宠互动、语音联网对话和相册显示已通过，触摸操作顺畅；扫描间隔会随运行负载变化。
@@ -225,9 +225,23 @@ CLAWD PET keeps its classic orange launcher icon; inside the app, the creature's
 body color continues to follow its current evolution form.
 
 Battery voltage, percentage, signed current and BatteryStatus come from the BQ27220
-gauge. SETTINGS → POWER shows CHARGING, FULL or CHARGE PAUSED.
+gauge. SETTINGS → POWER separately shows USB CONNECTED when the ESP32 receives
+USB host packets, and the battery's measured CHARGING, DISCHARGING, FULL or
+CHARGE UNKNOWN state. The delayed DSG flag cannot override a new current reading.
 A cable connection or 100% reading alone is not treated as proof
 of charging or completed charging; failed status reads show STATUS UNKNOWN.
+USB connection detection works with the computer's serial monitor closed. A power
+bank/charger sends no host packets, so an absent USB label does not prove the cable
+is unplugged. Battery-current detection remains independent of USB data traffic.
+Zero current is displayed as CHARGE UNKNOWN: it cannot confirm the charger chip's
+state. It is not displayed as "not charging".
+Serial `B` reports USB status, connection/disconnection counts and read-only gauge
+registers; `S` opens SETTINGS for display checks.
+
+**充电检测尚未完整通过实机验证（2026-10-17）。** 电脑 USB 插拔识别正常；但重插后出现过电量计持续报告
+`0mA`、BatteryStatus `0x5029/0x5028`，用户同时观察到指示灯常亮。增加 BQ27220 手册要求的读取间隔后仍能复现，
+原因尚未确定。此时只确认 USB 已连接，充电状态显示 **CHARGE UNKNOWN**，不能承诺可靠识别任意充电器或充满状态。
+正电流仅表示电量计测到电池有净流入电流，不能代替充电芯片 STAT 状态。
 
 **SETTINGS** has VOLUME, SYSTEM, NET, USB and POWER pages behind a small arc menu. VOLUME is the assistant's level,
 kept in the NVS key its own AudioCodec::Start() reads — see system/audio.h for why that
@@ -240,6 +254,9 @@ provides the SD-card access mode. The integrated voice pet handles assistant net
 USB 插入后会自动给主板供电；插线时 PWR 的关机请求无法切断 VBUS 供电。这是板卡电源路径行为，见 [板厂 FAQ](https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85B/FAQ)。仅充电模式用于减少运行耗电，实际充电速度仍受充电芯片、电池阶段和 USB 供电限制。
 
 <img src="docs/images/power.png" width="240" alt="POWER 仅充电页面，实际 C++ 渲染，84% 为演示电量">
+<img src="docs/images/power-no-current.png" width="240" alt="POWER 插线但零充电电流的页面，实际 C++ 渲染，10% 为演示电量">
+
+左图为检测到电脑且电量计报告正向电流；右图为检测到电脑、零电流且充电状态未确认。两种状态均不会再显示 ON BATTERY。
 
 **Controls.** Drag a finger around the application ring to rotate it; release to snap
 to the nearest app. Tap an icon or the centre to open it. Tilt remains optional and

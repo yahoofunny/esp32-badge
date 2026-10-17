@@ -252,6 +252,12 @@ void loop()
                     active = nullptr;
                     screen = SCREEN_LAUNCHER;
                     Serial.println("[sys] diagnostics: launcher");
+                } else if (!strcmp(cmd, "S")) {
+                    if (active) active->leave();
+                    active = &g_settings;
+                    active->enter();
+                    screen = SCREEN_GAME;
+                    Serial.println("[sys] diagnostics: SETTINGS opened");
                 } else if (!strcmp(cmd, "D")) {
                     Serial.printf("[sys] screen=%s app=%s heap=%u internal=%u psram=%u lcd=%u\n",
                         screen == SCREEN_LAUNCHER ? "launcher" : "app",
@@ -260,8 +266,9 @@ void loop()
                         LCD_completedTransfers());
                 } else if (!strcmp(cmd, "B")) {
                     const auto b=power::cached();
-                    Serial.printf("[power] %s valid=%d %d%% %dmV %+dmA flags=%04x\n",
-                        power::stateText(b.state),b.valid,b.percent,b.millivolts,b.milliamps,b.batteryStatus);
+                    Serial.printf("[power] usb_host=%d %s valid=%d %d%% %dmV %+dmA flags=%04x\n",
+                        b.usbHostConnected,power::stateText(b.state),b.valid,b.percent,b.millivolts,b.milliamps,b.batteryStatus);
+                    power::printDiagnostics();
                 }
                 n = 0;
             } else if (n < 23) {

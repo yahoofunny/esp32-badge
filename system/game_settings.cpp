@@ -455,6 +455,7 @@ void GameSettings::renderMenu()
     else         snprintf(line, sizeof(line), "battery --");
     gfx::textCentered(line, 62, b.valid && b.percent < 20 ? COL_WARN
                                                           : COL_DIM, 1);
+    if (b.usbHostConnected) gfx::textCentered("USB CONNECTED",84,COL_ACCENT,1);
 }
 
 void GameSettings::updatePower()
@@ -470,6 +471,7 @@ void GameSettings::renderPower()
     gfx::clear(COL_BG);renderBack();
     const auto b=power::cached();
     gfx::textCentered("POWER",72,COL_ACCENT,2);
+    if (b.usbHostConnected) gfx::textCentered("USB CONNECTED",96,COL_ACCENT,1);
     char text[32];
     if (b.valid) snprintf(text,sizeof(text),"%d%%",b.percent);else snprintf(text,sizeof(text),"--");
     gfx::textCentered(text,114,COL_TEXT,4);

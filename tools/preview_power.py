@@ -23,14 +23,17 @@ def main():
     code+=function_source(src,'void GameSettings::renderBack()')+'\n'
     code+=function_source(src,'void GameSettings::renderPower()')+'\n'
     code+='''
-namespace power {Reading cached(){Reading r;r.valid=true;r.percent=84;r.millivolts=4040;
-    r.milliamps=180;r.state=ChargeState::Charging;return r;}}
+static bool noChargeCurrent=false;
+namespace power {Reading cached(){Reading r;r.usbHostConnected=true;r.valid=true;
+    r.percent=noChargeCurrent?10:84;r.millivolts=noChargeCurrent?3766:4040;
+    r.milliamps=noChargeCurrent?0:180;r.state=noChargeCurrent?ChargeState::Idle:ChargeState::Charging;return r;}}
 void GameSettings::enter(){} void GameSettings::leave(){} void GameSettings::update(float){}
 void GameSettings::drawIcon(float,float,float)const{}
 void GameSettings::render(){renderPower();}
-int main(){
+int main(int argc,char**){
+    noChargeCurrent=argc>1;
     std::vector<uint16_t> pixels(SCR_W*SCR_H);fb=pixels.data();GameSettings page;page.render();
-    FILE* f=fopen("build/power-preview/power.ppm","wb");if(!f)return 1;
+    FILE* f=fopen(noChargeCurrent?"build/power-preview/power-no-current.ppm":"build/power-preview/power.ppm","wb");if(!f)return 1;
     fprintf(f,"P6\\n360 360\\n255\\n");
     for(int y=0;y<SCR_H;++y)for(int x=0;x<SCR_W;++x){uint16_t c=PX(fb[y*SCR_W+x]);
         unsigned char p[]={static_cast<unsigned char>(((c>>11)&31)*255/31),
@@ -48,8 +51,12 @@ int main(){
     subprocess.run([compiler,'-std=c++17','-O2','-static','-Itests/native',str(source),
         'system/gfx.cpp','-o',str(binary)],cwd=ROOT,env=env,check=True)
     subprocess.run([str(binary)],cwd=ROOT,env=env,check=True)
+    subprocess.run([str(binary),'no-current'],cwd=ROOT,env=env,check=True)
     destination=ROOT/'docs/images/power.png'
     Image.open(output/'power.ppm').save(destination,optimize=True)
+    print(destination)
+    destination=ROOT/'docs/images/power-no-current.png'
+    Image.open(output/'power-no-current.ppm').save(destination,optimize=True)
     print(destination)
 
 if __name__=='__main__':main()

@@ -44,7 +44,7 @@ namespace charge_sleep {
     rtc_gpio_set_direction(GPIO_NUM_0,RTC_GPIO_MODE_INPUT_ONLY);
     rtc_gpio_pullup_en(GPIO_NUM_0);rtc_gpio_pulldown_dis(GPIO_NUM_0);
     ESP_ERROR_CHECK(esp_sleep_enable_ext0_wakeup(GPIO_NUM_0,0));
-    Serial.println("[power] charge-only deep sleep; BOOT wakes; hardware charger remains active");
+    Serial.println("[power] charge-only deep sleep; BOOT wakes; charger circuit unchanged");
     Serial.flush();
     esp_deep_sleep_start();
 }

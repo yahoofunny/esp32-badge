@@ -156,6 +156,15 @@ MX1.25 2PIN 座接 3.7V 锂电，板载充电，BQ27220 电量计（I²C `0x55`�
 
 早期笔记把 `0x2E=100` 和 `0x0A=0x4028` 当成异常，这是命令含义误读：`0x2E` 为健康度，`0x0A` 是位标志。
 状态和电流共同判断充电、放电、充满或暂停；读失败显示未知，避免保留过时的 CHARGING。
+`DSG` 是带退出延时的电量计模式标志，不能用来判断 USB 是否连接，也不能覆盖新的正向/零电流读数。
+电脑插线由 ESP32 USB Serial/JTAG 接收到的 SOF 数据包独立确认，不要求打开串口监视器。
+它不能确认没有数据通信的充电器是否接线；负电流只表示电池净放电，因此显示 DISCHARGING，不再显示 ON BATTERY。
+[板厂原理图](https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.85B/blob/main/hardware/ESP32-S3-Touch-LCD-1.85B%20Rev1.1.pdf)
+中 ETA6098 的 STAT 只连接 LED1，没有接入 ESP32 GPIO，无法直接读取充电芯片的灯状态。
+
+2026-10-17 实机仍有未解决现象：重新插线后，主机连接为真，但电量计持续报告 `0mA`、
+`0x5029/0x5028`，用户观察到指示灯常亮。补足手册 5.3 要求的 I2C 数据包间隔后仍能复现，
+因此不能把零电流直接判为未充电，也不能把电脑连接直接判为正在充电。界面显示 CHARGE UNKNOWN。
 
 USB 的 VBUS 会持续使能 DCDC，因此插 USB 会启动主板，插线时 PWR 无法完全断掉主板电源。
 详见 [官方 FAQ](https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85B/FAQ)。
