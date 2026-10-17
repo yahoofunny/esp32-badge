@@ -16,7 +16,7 @@ static const char WEB[] PROGMEM=R"HTML(<!doctype html><html lang="zh-CN"><meta c
 <style>*{box-sizing:border-box}body{margin:0;background:#101019;color:#eddfd1;font:16px/1.6 system-ui,sans-serif}main{max-width:760px;margin:auto;padding:34px 20px 60px}h1{margin:8px 0;font-size:32px}h2{font-size:21px;margin:0 0 8px}p{color:#b3a79e}.tag{color:#f4ac62;font-size:13px;letter-spacing:2px}.card{background:#20202c;border:1px solid #34323d;border-radius:18px;padding:22px;margin-top:20px}button,.pick{display:inline-block;background:#f0a35c;color:#21170f;border:0;border-radius:10px;padding:12px 20px;font:inherit;font-weight:650;cursor:pointer}input[type=file]{display:block;width:100%;margin:16px 0;color:#c8beb7}button:disabled{opacity:.45;cursor:wait}progress{width:100%;accent-color:#f0a35c;height:16px}.muted{color:#a69b93;font-size:14px}#result{white-space:pre-wrap;overflow-wrap:anywhere}.file{display:flex;justify-content:space-between;gap:16px;border-top:1px solid #34323d;padding:9px 0;overflow-wrap:anywhere}.file span:last-child{white-space:nowrap;color:#a69b93}.row{display:flex;justify-content:space-between;align-items:center;gap:16px}#refresh{padding:8px 14px;font-size:14px;background:#34313b;color:#eddfd1}</style>
 <style>[hidden]{display:none!important}.feedback{white-space:pre-wrap;overflow-wrap:anywhere;margin:14px 0 8px;font-size:14px}button[data-cancel]{background:#383340;color:#eddfd1}</style>
 <main><div class="tag">BADGE · 本地 Wi-Fi</div><h1>吧唧传输</h1><p>把音乐和照片传到吧唧。无需安装 App，文件直接保存在 SD 卡。</p>
-<section class="card"><h2>添加音乐</h2><div class="muted">MP3 / WAV / M4A / AAC / FLAC / OGG · 每首最多 512 MB<br>从手机“文件”中选择，选中后检查格式。16 位 FLAC 可直接试听；24 位 FLAC 会提示兼容性。</div><input id="music" aria-label="选择音乐" type="file" multiple><button data-kind="music">上传音乐</button> <button data-cancel="music" hidden>取消上传</button><div class="feedback" id="music-feedback" role="status" aria-live="polite"></div><progress id="music-progress" value="0" max="100" hidden></progress></section>
+<section class="card"><h2>添加音乐</h2><div class="muted">MP3 / WAV / M4A / AAC / FLAC / OGG · 每首最多 512 MB<br>从手机“文件”中选择，选中后检查格式。支持 8–24 位单/双声道 FLAC。<br>上传时请保持手机亮屏、网页在前台；中断需重传，未完成的临时数据会清理。</div><input id="music" aria-label="选择音乐" type="file" multiple><button data-kind="music">上传音乐</button> <button data-cancel="music" hidden>取消上传</button><div class="feedback" id="music-feedback" role="status" aria-live="polite"></div><progress id="music-progress" value="0" max="100" hidden></progress></section>
 <section class="card"><h2>添加照片</h2><div class="muted">JPG / PNG / WebP / GIF / BMP · 每张最多 50 MB。GIF 保留动画。静态照片转为最长边 1280 像素的 JPG，适合吧唧显示。</div><input id="photos" aria-label="选择照片" type="file" multiple accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,.bmp"><button data-kind="photos">上传照片</button> <button data-cancel="photos" hidden>取消上传</button><div class="feedback" id="photos-feedback" role="status" aria-live="polite"></div><progress id="photos-progress" value="0" max="100" hidden></progress></section>
 <section class="card" aria-live="polite"><progress id="progress" value="0" max="100"></progress><div id="result">等待选择文件</div><p class="muted">上传期间请保持热点连接。没有互联网是正常现象；请保持连接，必要时暂停手机的自动网络切换。同名文件会另存，不覆盖原文件。</p></section>
 <section class="card"><div class="row"><h2>SD 卡里的文件</h2><button id="refresh">刷新</button></div><div id="files">正在读取…</div></section><p class="muted">完成后，在吧唧上点 STOP 或 BACK 关闭热点，再打开 MUSIC 或 PHOTOS 查看。每个文件夹最多显示 64 个文件。</p></main>
@@ -55,7 +55,7 @@ for(const button of document.querySelectorAll('[data-kind]'))button.onclick=asyn
    if(kind==='photos')f=await photo(f);checkFile(kind,f);
    if(cancelRequested)throw Error('已取消上传，已完成的文件保留。');
    const result=await upload(kind,f,i+1,files.length);done++;
-   if(result.audio&&!result.audio.supported)warnings.push(result.name+' 已保存，但当前播放器不支持此 FLAC（'+result.audio.bits+' 位 / '+result.audio.channels+' 声道）。可改传 16 位双声道 FLAC 或 MP3。');
+   if(result.audio&&!result.audio.supported)warnings.push(result.name+' 已保存，但当前播放器不支持此 FLAC（'+result.audio.bits+' 位 / '+result.audio.channels+' 声道，或帧块过大）。可改传 24 位以内单/双声道、帧块不超过 8192 的 FLAC 或 MP3。');
    show(kind,'已保存 '+result.name);
   }
   $(kind).value='';$('progress').value=bar.value=100;
@@ -133,16 +133,27 @@ static esp_err_t upload(httpd_req_t *req) {
     File output=SD_MMC.open(temp,FILE_WRITE,true);
     if(!output)return reply(req,"{\"error\":\"无法写入 SD 卡\"}","500 Internal Server Error");
     message("UPLOADING",true,0,req->content_len);
-    char buffer[4096];uint8_t header[42]={0};size_t headerBytes=0;
-    uint32_t received=0,lastDataMs=millis();bool ok=true;
+    char buffer[4096];uint8_t header[42]={0};size_t headerBytes=0,buffered=0;
+    uint32_t received=0,lastDataMs=millis(),startedMs=lastDataMs,readMs=0,writeMs=0,writes=0;bool ok=true;
     while(received<req->content_len&&!stopping.load()) {
-        const int n=httpd_req_recv(req,buffer,min(sizeof buffer,size_t(req->content_len-received)));
+        const uint32_t readStarted=millis();
+        const int n=httpd_req_recv(req,buffer+buffered,min(sizeof buffer-buffered,size_t(req->content_len-received)));
+        readMs+=uint32_t(millis()-readStarted);
         if(n==HTTPD_SOCK_ERR_TIMEOUT && uint32_t(millis()-lastDataMs)<45000)continue;
-        if(n<=0||output.write((const uint8_t*)buffer,n)!=(size_t)n){ok=false;break;}
+        if(n<=0){ok=false;break;}
         lastDataMs=millis();
         const size_t capture=min(size_t(n),sizeof header-headerBytes);
-        if(capture){memcpy(header+headerBytes,buffer,capture);headerBytes+=capture;}
-        received+=n;
+        if(capture){memcpy(header+headerBytes,buffer+buffered,capture);headerBytes+=capture;}
+        received+=n;buffered+=n;
+        // recv() may return one small TCP packet. Coalesce into aligned writes
+        // rather than invoking FAT/SD for every packet, with the same 4 KiB RAM.
+        if(buffered==sizeof buffer || received==req->content_len) {
+            const uint32_t writeStarted=millis();++writes;
+            const size_t written=output.write((const uint8_t*)buffer,buffered);
+            writeMs+=uint32_t(millis()-writeStarted);
+            if(written!=buffered){ok=false;break;}
+            buffered=0;
+        }
         portENTER_CRITICAL(&stateLock);state.bytes=received;portEXIT_CRITICAL(&stateLock);
     }
     output.flush();output.close();
@@ -153,6 +164,9 @@ static esp_err_t upload(httpd_req_t *req) {
     portENTER_CRITICAL(&stateLock);++state.completed;state.freeBytes=free;portEXIT_CRITICAL(&stateLock);
     message("SAVED TO SD",false,received,received);
     Serial.printf("[transfer] saved %s bytes=%u\n",target,received);
+    const uint32_t elapsedMs=millis()-startedMs;
+    Serial.printf("[transfer] performance elapsed_ms=%u receive_ms=%u write_ms=%u writes=%u KiBps=%u\n",
+        elapsedMs,readMs,writeMs,writes,unsigned(uint64_t(received)*1000/(uint64_t(elapsedMs?elapsedMs:1)*1024)));
     String response="{\"name\":"+jsonString(strrchr(target,'/')+1)+",\"bytes\":"+String(received)+"}";
     const FlacInfo audio=inspectFlac(header,headerBytes);
     if(audio.valid) {

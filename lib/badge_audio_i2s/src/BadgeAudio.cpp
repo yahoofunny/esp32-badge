@@ -1542,8 +1542,8 @@ int Audio::read_FLAC_Header(uint8_t* data, size_t len) {
         uint8_t bps = (nextval & 0x01) << 4;
         bps += (*(data + 16) >> 4) + 1;
         m_flacBitsPerSample = bps;
-        if((bps != 8) && (bps != 16)) {
-            log_e("bits per sample must be 8 or 16, is %i", bps);
+        if(bps < 8 || bps > 24 || m_flacNumChannels > 2 || m_flacMaxBlockSize > MAX_BLOCKSIZE) {
+            AUDIO_INFO("Unsupported FLAC: %u-bit, %u channels, block %u", bps, m_flacNumChannels, m_flacMaxBlockSize);
             stopSong();
             return -1;
         }
@@ -4300,7 +4300,7 @@ int Audio::findNextSync(uint8_t* data, size_t len) {
     if(m_codec == CODEC_FLAC) {
         nextSync = FLACFindSyncWord(data, len);
         if(nextSync == -1) return len; // OggS not found, search next block
-        //FLACSetRawBlockParams(m_flacNumChannels, m_flacSampleRate, m_flacBitsPerSample, m_flacTotalSamplesInStream, m_audioDataSize);
+        if(m_flacSampleRate) FLACSetRawBlockParams(m_flacNumChannels, m_flacSampleRate, m_flacBitsPerSample, m_flacTotalSamplesInStream, m_audioDataSize);
     }
     if(m_codec == CODEC_OPUS) {
         nextSync = OPUSFindSyncWord(data, len);
@@ -4528,7 +4528,16 @@ void Audio::compute_audioCurrentTime(int bd) {
     if(m_codec == CODEC_MP3) { setBitrate(MP3GetBitrate()); }   // if not CBR, bitrate can be changed
     if(m_codec == CODEC_M4A) { setBitrate(AACGetBitrate()); }   // if not CBR, bitrate can be changed
     if(m_codec == CODEC_AAC) { setBitrate(AACGetBitrate()); }   // if not CBR, bitrate can be changed
-    if(m_codec == CODEC_FLAC) { setBitrate(FLACGetBitRate()); } // if not CBR, bitrate can be changed
+    if(m_codec == CODEC_FLAC) {
+        // VBR frame bytes and split output buffers do not form a playback clock.
+        // Count decoded inter-channel samples; use the whole-file average only
+        // for approximate byte-based seeking.
+        setBitrate(FLACGetBitRate());
+        if(getSampleRate()) m_audioCurrentTime += double(m_validSamples) / getSampleRate();
+        if(m_flacTotalSamplesInStream)
+            m_avr_bitrate = uint64_t(m_audioDataSize) * 8 * m_flacSampleRate / m_flacTotalSamplesInStream;
+        return;
+    }
 
     //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     if(m_avr_bitrate == 0) { // first time
@@ -4627,7 +4636,7 @@ void Audio::printDecodeError(int r) {
             case ERR_FLAC_PREORDER_TOO_BIG: e = "PREORDER TOO BIG"; break;
             case ERR_FLAC_RESERVED_RESIDUAL_CODING: e = "RESERVED RESIDUAL CODING"; break;
             case ERR_FLAC_WRONG_RICE_PARTITION_NR: e = "WRONG RICE PARTITION NR"; break;
-            case ERR_FLAC_BITS_PER_SAMPLE_TOO_BIG: e = "BITS PER SAMPLE > 16"; break;
+            case ERR_FLAC_BITS_PER_SAMPLE_TOO_BIG: e = "BITS PER SAMPLE > 24"; break;
             case ERR_FLAG_BITS_PER_SAMPLE_UNKNOWN: e = "BITS PER SAMPLE UNKNOWN"; break;
             default: e = "ERR_UNKNOWN";
         }

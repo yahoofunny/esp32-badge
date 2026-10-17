@@ -26,7 +26,7 @@ let fail=false,holdUploads=false;const held=[];
    const result={name,bytes:body.length};
    if(body.length>=26&&body.subarray(0,4).toString()==='fLaC'&&(body[4]&127)===0&&body[7]===34){
     const bits=((body[20]&1)<<4)+(body[21]>>4)+1,channels=((body[20]>>1)&7)+1;
-    result.audio={rate:(body[18]<<12)|(body[19]<<4)|(body[20]>>4),bits,channels,supported:(bits===8||bits===16)&&channels<=2};
+    result.audio={rate:(body[18]<<12)|(body[19]<<4)|(body[20]>>4),bits,channels,supported:bits>=8&&bits<=24&&channels<=2};
    }
    return route.fulfill({json:result});
   });
@@ -112,7 +112,12 @@ let fail=false,holdUploads=false;const held=[];
   const hiRes=Buffer.alloc(42);hiRes.set([102,76,97,67,128,0,0,34]);hiRes[10]=16;hiRes[18]=10;hiRes[19]=196;hiRes[20]=67;hiRes[21]=112;
   await page.locator('#music').setInputFiles({name:'HiRes.flac',mimeType:'audio/flac',buffer:hiRes});
   await page.getByRole('button',{name:'上传音乐'}).click();
-  await page.waitForFunction(()=>document.querySelector('#music-feedback').textContent.includes('不支持此 FLAC（24 位'));
+  await page.waitForFunction(()=>document.querySelector('#music-feedback').textContent.includes('已完成 1 个文件'));
+  assert(!(await page.locator('#music-feedback').textContent()).includes('不支持此 FLAC'));
+  hiRes[21]=240;
+  await page.locator('#music').setInputFiles({name:'32bit.flac',mimeType:'audio/flac',buffer:hiRes});
+  await page.getByRole('button',{name:'上传音乐'}).click();
+  await page.waitForFunction(()=>document.querySelector('#music-feedback').textContent.includes('不支持此 FLAC（32 位'));
   assert.deepEqual(errors,[]);
   console.log('PASS: actual 51 MiB browser upload, 512 MiB music/50 MiB photo limits, inline errors, cancel/stall recovery, no total timeout, FLAC compatibility warning, JPEG/GIF preservation and picker regression');
  }finally{await browser.close()}

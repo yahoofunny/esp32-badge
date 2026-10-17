@@ -47,6 +47,7 @@ bool             s_f_flacNewMetadataBlockPicture = false;
 uint8_t          s_flacPageNr = 0;
 int32_t**        s_samplesBuffer = NULL;
 uint16_t         s_maxBlocksize = MAX_BLOCKSIZE;
+uint16_t         s_outputOffset = 0;
 
 //----------------------------------------------------------------------------------------------------------------------
 //          FLAC INI SECTION
@@ -138,6 +139,7 @@ void FLACDecoder_setDefaults(){
     s_flacRemainBlockPicLen = 0;
     s_blockSize = 0;
     s_blockSizeLeft = 0;
+    s_outputOffset = 0;
     s_flacValidSamples = 0;
     s_rIndex = 0;
     s_flacStatus = 0;
@@ -178,6 +180,7 @@ uint32_t readUint(uint8_t nBits, int *bytesLeft){
 }
 
 int32_t readSignedInt(int nBits, int* bytesLeft){
+    if(!nBits) return 0; // Residual escape coding can have zero-bit values.
     int32_t temp = readUint(nBits, bytesLeft) << (32 - nBits);
     temp = temp >> (32 - nBits); // The C++ compiler uses the sign bit to fill vacated bit positions
     return temp;
@@ -207,6 +210,7 @@ void FLACSetRawBlockParams(uint8_t Chans, uint32_t SampRate, uint8_t BPS, uint32
 //----------------------------------------------------------------------------------------------------------------------
 void FLACDecoderReset(){ // set var to default
     s_flacStatus = DECODE_FRAME;
+    s_outputOffset = 0;
     s_flac_bitBuffer = 0;
     s_flacBitBufferLen = 0;
 }
@@ -446,9 +450,9 @@ int parseMetaDataBlockHeader(uint8_t *inbuf, int16_t nBytes){
                 //log_i("nrOfChannels %i", nrOfChannels);
                 FLACMetadataBlock->numChannels = nrOfChannels;
 
-                bitsPerSample  =  (*(inbuf + pos + 12) & 0x01) << 5;
+                bitsPerSample  =  (*(inbuf + pos + 12) & 0x01) << 4;
                 bitsPerSample += ((*(inbuf + pos + 13) & 0xF0) >> 4) + 1;
-                //log_i("bitsPerSample %i", bitsPerSample);
+                FLACMetadataBlock->bitsPerSample = bitsPerSample;
 
                 totalSamplesInStream  = (uint64_t)(*(inbuf + pos + 17) & 0x0F) << 32;
                 totalSamplesInStream += (*(inbuf + pos + 14)) << 24;
@@ -720,23 +724,26 @@ int8_t FLACDecodeNative(uint8_t *inbuf, int *bytesLeft, short *outbuf){
         // blocksize can be much greater than outbuff, so we can't stuff all in once
         // therefore we need often more than one loop (split outputblock into pieces)
         uint16_t blockSize;
-        static uint16_t offset = 0;
+        uint16_t &offset = s_outputOffset;
         if(s_blockSize < s_flacOutBuffSize + offset) blockSize = s_blockSize - offset;
         else blockSize = s_flacOutBuffSize;
 
         for (int i = 0; i < blockSize; i++) {
             for (int j = 0; j < FLACMetadataBlock->numChannels; j++) {
-                int val = s_samplesBuffer[j][i + offset];
-                if (FLACMetadataBlock->bitsPerSample == 8) val += 128;
-                outbuf[2*i+j] = val;
+                int32_t val = s_samplesBuffer[j][i + offset];
+                // Keep prediction and stereo reconstruction at source depth.
+                // Only the final DAC buffer is reduced to signed 16-bit PCM.
+                const int bits = FLACMetadataBlock->bitsPerSample;
+                if(bits > 16) val >>= bits - 16;
+                else if(bits < 16) val *= 1 << (16 - bits);
+                outbuf[FLACMetadataBlock->numChannels*i+j] = int16_t(val);
             }
         }
 
         s_flacValidSamples = blockSize * FLACMetadataBlock->numChannels;
         offset += blockSize;
-        s_flacCompressionRatio = (float)sbl / (s_flacValidSamples * FLACMetadataBlock->numChannels);
-        s_flacBitrate = FLACMetadataBlock->sampleRate * FLACMetadataBlock->bitsPerSample * FLACMetadataBlock->numChannels;
-        s_flacBitrate /= s_flacCompressionRatio;
+        // Bitrate describes the entire decoded frame, not one output slice.
+        s_flacBitrate = uint64_t(FLACMetadataBlock->sampleRate) * sbl * 8 / s_blockSize;
 
         if(offset != s_blockSize) return GIVE_NEXT_LOOP;
         if(offset > s_blockSize) { log_e("offset has a wrong value"); }
@@ -764,7 +771,8 @@ int8_t flacDecodeFrame(uint8_t *inbuf, int *bytesLeft){
         if(FLACFrameHeader->chanAsgn == 1) FLACMetadataBlock->numChannels = 2;
         if(FLACFrameHeader->chanAsgn > 7)  FLACMetadataBlock->numChannels = 2;
     }
-    if(FLACMetadataBlock->numChannels < 1) return ERR_FLAC_UNKNOWN_CHANNEL_ASSIGNMENT;
+    if(FLACMetadataBlock->numChannels < 1 || FLACMetadataBlock->numChannels > MAX_CHANNELS)
+        return ERR_FLAC_UNKNOWN_CHANNEL_ASSIGNMENT;
     if(!FLACMetadataBlock->bitsPerSample){
         if(FLACFrameHeader->sampleSizeCode == 1) FLACMetadataBlock->bitsPerSample =  8;
         if(FLACFrameHeader->sampleSizeCode == 2) FLACMetadataBlock->bitsPerSample = 12;
@@ -772,7 +780,7 @@ int8_t flacDecodeFrame(uint8_t *inbuf, int *bytesLeft){
         if(FLACFrameHeader->sampleSizeCode == 5) FLACMetadataBlock->bitsPerSample = 20;
         if(FLACFrameHeader->sampleSizeCode == 6) FLACMetadataBlock->bitsPerSample = 24;
     }
-    if(FLACMetadataBlock->bitsPerSample > 16) return ERR_FLAC_BITS_PER_SAMPLE_TOO_BIG;
+    if(FLACMetadataBlock->bitsPerSample > 24) return ERR_FLAC_BITS_PER_SAMPLE_TOO_BIG;
     if(FLACMetadataBlock->bitsPerSample < 8 ) return ERR_FLAG_BITS_PER_SAMPLE_UNKNOWN;
     if(!FLACMetadataBlock->sampleRate){
         if(FLACFrameHeader->sampleRateCode == 1)  FLACMetadataBlock->sampleRate =  88200;
@@ -812,9 +820,7 @@ int8_t flacDecodeFrame(uint8_t *inbuf, int *bytesLeft){
     else{
         return ERR_FLAC_RESERVED_BLOCKSIZE_UNSUPPORTED;
     }
-    uint16_t maxBS = 8192;
-    if(psramFound()) maxBS = 8192 * 4;
-    if(s_blockSize > maxBS){
+    if(s_blockSize > s_maxBlocksize){
         log_e("Error: blockSize too big ,%i bytes", s_blockSize);
         return ERR_FLAC_BLOCKSIZE_TOO_BIG;
     }
@@ -840,7 +846,7 @@ uint64_t FLACGetTotoalSamplesInStream(){
 }
 //----------------------------------------------------------------------------------------------------------------------
 uint8_t FLACGetBitsPerSample(){
-    return FLACMetadataBlock->bitsPerSample;
+    return 16; // FLACDecodeNative always emits signed 16-bit PCM.
 }
 //----------------------------------------------------------------------------------------------------------------------
 uint8_t FLACGetChannels(){
@@ -864,13 +870,18 @@ uint32_t FLACGetAudioFileDuration() {
 }
 //----------------------------------------------------------------------------------------------------------------------
 int8_t decodeSubframes(int* bytesLeft){
+    int8_t ret;
     if(FLACFrameHeader->chanAsgn <= 7) {
-        for (int ch = 0; ch < FLACMetadataBlock->numChannels; ch++)
-            decodeSubframe(FLACMetadataBlock->bitsPerSample, ch, bytesLeft);
+        for (int ch = 0; ch < FLACMetadataBlock->numChannels; ch++) {
+            ret = decodeSubframe(FLACMetadataBlock->bitsPerSample, ch, bytesLeft);
+            if(ret) return ret;
+        }
     }
     else if (8 <= FLACFrameHeader->chanAsgn && FLACFrameHeader->chanAsgn <= 10) {
-        decodeSubframe(FLACMetadataBlock->bitsPerSample + (FLACFrameHeader->chanAsgn == 9 ? 1 : 0), 0, bytesLeft);
-        decodeSubframe(FLACMetadataBlock->bitsPerSample + (FLACFrameHeader->chanAsgn == 9 ? 0 : 1), 1, bytesLeft);
+        ret = decodeSubframe(FLACMetadataBlock->bitsPerSample + (FLACFrameHeader->chanAsgn == 9 ? 1 : 0), 0, bytesLeft);
+        if(ret) return ret;
+        ret = decodeSubframe(FLACMetadataBlock->bitsPerSample + (FLACFrameHeader->chanAsgn == 9 ? 0 : 1), 1, bytesLeft);
+        if(ret) return ret;
         if(FLACFrameHeader->chanAsgn == 8) {
             for (int i = 0; i < s_blockSize; i++)
                 s_samplesBuffer[1][i] = (
@@ -913,7 +924,7 @@ int8_t decodeSubframe(uint8_t sampleDepth, uint8_t ch, int* bytesLeft) {
     sampleDepth -= shift;
 
     if(type == 0){  // Constant coding
-        int16_t s= readSignedInt(sampleDepth, bytesLeft);
+        int32_t s= readSignedInt(sampleDepth, bytesLeft);
         for(int i=0; i < s_blockSize; i++){
             s_samplesBuffer[ch][i] = s;
         }
@@ -935,7 +946,7 @@ int8_t decodeSubframe(uint8_t sampleDepth, uint8_t ch, int* bytesLeft) {
     }
     if(shift>0){
         for (int i = 0; i < s_blockSize; i++){
-            s_samplesBuffer[ch][i] <<= shift;
+            s_samplesBuffer[ch][i] *= int32_t(1u << shift);
         }
     }
     return ERR_FLAC_NONE;
@@ -1006,14 +1017,14 @@ int8_t decodeResiduals(uint8_t warmup, uint8_t ch, int* bytesLeft) {
     return ERR_FLAC_NONE;
 }
 //----------------------------------------------------------------------------------------------------------------------
-void restoreLinearPrediction(uint8_t ch, uint8_t shift) {
+void restoreLinearPrediction(uint8_t ch, int8_t shift) {
 
     for (int i = coefs.size(); i < s_blockSize; i++) {
-        int32_t sum = 0;
+        int64_t sum = 0;
         for (int j = 0; j < coefs.size(); j++){
-            sum += s_samplesBuffer[ch][i - 1 - j] * coefs[j];
+            sum += int64_t(s_samplesBuffer[ch][i - 1 - j]) * coefs[j];
         }
-        s_samplesBuffer[ch][i] += (sum >> shift);
+        s_samplesBuffer[ch][i] += int32_t(shift >= 0 ? sum >> shift : sum * (int64_t(1) << -shift));
     }
 }
 //----------------------------------------------------------------------------------------------------------------------

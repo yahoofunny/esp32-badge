@@ -33,6 +33,7 @@ struct Entry {std::string bytes;bool directory=false,discard=false;uint32_t hash
 static std::map<std::string,std::shared_ptr<Entry>> disk;
 static bool writeFailure=false,renameFailure=false,discardWrites=false;
 static size_t maxReadRequest=0,maxWriteSize=0;
+static unsigned writeCalls=0;
 class File {
     std::shared_ptr<Entry> entry;
     std::string path;
@@ -47,7 +48,7 @@ public:
     bool isDirectory()const{return entry&&entry->directory;}
     const char *name()const{return strrchr(path.c_str(),'/')+1;}
     File openNextFile(){if(next>=children.size())return File();const auto p=children[next++];return File(p,disk.at(p));}
-    size_t write(const uint8_t *b,size_t n){if(writeFailure)return 0;maxWriteSize=std::max(maxWriteSize,n);entry->size+=n;
+    size_t write(const uint8_t *b,size_t n){++writeCalls;if(writeFailure)return 0;maxWriteSize=std::max(maxWriteSize,n);entry->size+=n;
         if(entry->discard){for(size_t i=0;i<n;i++)entry->hash=(entry->hash^b[i])*16777619u;}
         else entry->bytes.append((const char*)b,n);return n;}
     void flush(){}
@@ -111,6 +112,7 @@ int main(){
     disk["/Photos"]=std::make_shared<Entry>();disk["/Photos"]->directory=true;
     auto first=request();upload(&first);
     assert(first.status=="200 OK"&&disk.at("/Music/song.mp3")->bytes==first.body);
+    assert(writeCalls==3); // Ten small recv() packets become three SD writes.
     assert(state.completed==1&&!state.busy&&state.bytes==first.body.size());
     auto second=request();second.body[0]='y';upload(&second);
     assert(second.status=="200 OK"&&disk.at("/Music/song (1).mp3")->bytes==second.body);
@@ -147,8 +149,8 @@ int main(){
     assert(expected==disk.at("/Music/large.flac")->hash&&maxReadRequest<=4096&&maxWriteSize<=4096);
     assert(large.response.find("\"bits\":16")!=std::string::npos&&large.response.find("\"supported\":true")!=std::string::npos);
     auto highres=request("highres.flac");highres.body=large.body;highres.body[20]|=1;highres.body[21]=0x70;highres.content_len=highres.body.size();upload(&highres);
-    assert(highres.status=="200 OK"&&highres.response.find("\"bits\":24")!=std::string::npos&&highres.response.find("\"supported\":false")!=std::string::npos);
-    assert(highres.response=="{\"name\":\"highres.flac\",\"bytes\":42,\"audio\":{\"rate\":44100,\"bits\":24,\"channels\":2,\"supported\":false}}");
+    assert(highres.status=="200 OK"&&highres.response.find("\"bits\":24")!=std::string::npos&&highres.response.find("\"supported\":true")!=std::string::npos);
+    assert(highres.response=="{\"name\":\"highres.flac\",\"bytes\":42,\"audio\":{\"rate\":44100,\"bits\":24,\"channels\":2,\"supported\":true}}");
     for(int i=5;i<64;++i)disk["/Music/filler"+std::to_string(i)+".mp3"]=std::make_shared<Entry>();
     bad=request("full.mp3");upload(&bad);assert(bad.status=="409 Conflict"&&!disk.count("/Music/full.mp3"));
     assert(state.completed==5&&disk.at("/Music/song.mp3")->bytes==first.body);

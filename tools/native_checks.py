@@ -15,6 +15,7 @@ TESTS={
     'hypno_motion':['tests/hypno_motion_test.cpp'],
     'music_output':['tests/music_output_test.cpp'],
     'music_task':['tests/music_task_test.cpp','-pthread'],
+    'flac_clock':['tests/flac_clock_test.cpp'],
     'transfer_rules':['tests/transfer_rules_test.cpp'],
     'transfer_http':['tests/transfer_http_test.cpp'],
     'photo_blit':['tests/photo_blit_test.cpp'],
@@ -35,7 +36,7 @@ def run_checks(names=None):
     env['PATH']=str(Path(compiler).parent)+os.pathsep+env.get('PATH','')
     (ROOT/'build').mkdir(exist_ok=True)
     for name in names or TESTS:
-        if name in ('music_output','music_task','transfer_http'):
+        if name in ('music_output','music_task','transfer_http','flac_clock'):
             def function(source,signature):
                 start=source.index(signature);opening=source.index('{',start)
                 depth=0
@@ -55,6 +56,8 @@ def run_checks(names=None):
                 generated=';\n'.join(function(app,signature) for signature in
                     ('struct MusicPump {','struct MusicGuard {','void GameMusic::pumpAudio(',
                      'void GameMusic::leave('))
+            elif name=='flac_clock':
+                generated=function(decoder,'void Audio::compute_audioCurrentTime(')
             else:
                 transfer=(ROOT/'lib/badge_transfer/src/BadgeTransfer.cpp').read_text(encoding='utf-8')
                 generated='\n'.join(function(transfer,signature) for signature in

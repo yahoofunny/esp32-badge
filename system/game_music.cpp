@@ -101,7 +101,7 @@ void GameMusic::enter() {
     pump->stopped=xSemaphoreCreateBinary();
     if(!pump->lock || !pump->stopped){failed=true;return;}
     player=new Audio(false,3,I2S_NUM_0);
-    player->setBufsize(8192,128*1024);
+    player->setBufsize(8192,256*1024);
     if(!player->setPinout(48,38,47,2)){failed=true;return;}
     player->forceMono(true);player->setVolume(21);
     playCurrent();
@@ -194,6 +194,10 @@ void GameMusic::update(float dt) {
         MusicGuard guard(pump);
         elapsed=player->getAudioCurrentTime();duration=player->getAudioFileDuration();
         if(songFinished){songFinished=false;nextTrack();}
+        else if(!paused && !failed && !player->isRunning()) {
+            failed=true;redraw=true;digitalWrite(9,LOW);
+            Serial.println("[music] decoder stopped before EOF");
+        }
     }
     if(!paused && !failed && tracks)rotation=fmodf(rotation+dt*1.8f,2*PI_F);
     const int oldPressed=pressed;

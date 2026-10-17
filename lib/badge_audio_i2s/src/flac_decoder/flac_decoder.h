@@ -7,8 +7,8 @@
  *      Author: wolle
  *
  *  Restrictions:
- *  blocksize must not exceed 16342 bytes
- *  bits per sample must be 8 or 16
+ *  blocksize must not exceed MAX_BLOCKSIZE samples
+ *  source samples may be 8..24 bits; output is signed 16-bit PCM
  *  num Channels must be 1 or 2
  *
  *
@@ -176,7 +176,7 @@ int8_t           decodeSubframe(uint8_t sampleDepth, uint8_t ch, int* bytesLeft)
 int8_t           decodeFixedPredictionSubframe(uint8_t predOrder, uint8_t sampleDepth, uint8_t ch, int* bytesLeft);
 int8_t           decodeLinearPredictiveCodingSubframe(int lpcOrder, int sampleDepth, uint8_t ch, int* bytesLeft);
 int8_t           decodeResiduals(uint8_t warmup, uint8_t ch, int* bytesLeft);
-void             restoreLinearPrediction(uint8_t ch, uint8_t shift);
+void             restoreLinearPrediction(uint8_t ch, int8_t shift);
 int              FLAC_specialIndexOf(uint8_t* base, const char* str, int baselen, bool exact = false);
 char*            flac_x_ps_malloc(uint16_t len);
 char*            flac_x_ps_calloc(uint16_t len, uint8_t size);

@@ -26,7 +26,8 @@ int main(){
     auto info=inspectFlac(flac,sizeof flac);
     assert(info.valid&&info.supported&&info.rate==44100&&info.channels==2&&info.bits==16);
     flac[20]|=1;flac[21]=0x70;info=inspectFlac(flac,sizeof flac);
-    assert(info.valid&&!info.supported&&info.bits==24);
+    assert(info.valid&&info.supported&&info.bits==24);
+    flac[21]=0xf0;assert(!inspectFlac(flac,sizeof flac).supported); // 32 bits
     flac[20]=0x46;flac[21]=0xf0;assert(!inspectFlac(flac,sizeof flac).supported); // four channels
     flac[20]=0x42;flac[10]=0x40;assert(!inspectFlac(flac,sizeof flac).supported); // oversized block
     assert(!inspectFlac(flac,25).valid);flac[7]=33;assert(!inspectFlac(flac,sizeof flac).valid);

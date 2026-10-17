@@ -22,7 +22,7 @@ inline FlacInfo inspectFlac(const uint8_t *h,size_t n) {
     f.channels=((h[20]>>1)&7)+1;f.bits=((h[20]&1)<<4)+(h[21]>>4)+1;
     const uint16_t block=(uint16_t(h[10])<<8)|h[11];
     f.valid=f.rate>0&&block>0;
-    f.supported=f.valid&&(f.bits==8||f.bits==16)&&f.channels<=2&&block<=8192;
+    f.supported=f.valid&&f.bits>=8&&f.bits<=24&&f.channels<=2&&block<=8192;
     return f;
 }
 struct Status {
