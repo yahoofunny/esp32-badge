@@ -299,6 +299,12 @@ static const uint32_t FRAME_BYTES = (uint32_t)SCR_W * SCR_H * 2;
 static uint16_t *frameCache[CACHE_SLOTS] = { nullptr, nullptr, nullptr };
 static int  cacheIndex[CACHE_SLOTS] = { -1, -1, -1 };
 
+// Bumped by every step. The pre-decode draws into the framebuffer; if the user steps while
+// it is running, putting "the visible picture" back would overwrite the picture they just
+// asked for, and storing the frame it decoded would file it under the wrong name. The
+// generation says whether anything changed underneath it.
+static uint32_t stepGen = 0;
+
 static uint16_t *cacheSlot(int slot)
 {
     if (!frameCache[slot]) {
@@ -362,8 +368,15 @@ const char *GamePhotos::currentName() const {
     const auto *entry=clawd_album::at(index);
     return entry?entry->name:media::nameAt(index-clawd_album::count());
 }
+// A step rotates what each slot means. The buffers rotate with the labels: relabelling
+// alone left every slot describing another slot's pixels, which is a cache that hands back
+// the wrong picture.
 static void rotateForward()
 {
+    uint16_t *freed = frameCache[SLOT_PREV];
+    frameCache[SLOT_PREV] = frameCache[SLOT_CUR];
+    frameCache[SLOT_CUR] = frameCache[SLOT_NEXT];
+    frameCache[SLOT_NEXT] = freed;
     cacheIndex[SLOT_PREV] = cacheIndex[SLOT_CUR];
     cacheIndex[SLOT_CUR] = cacheIndex[SLOT_NEXT];
     cacheIndex[SLOT_NEXT] = -1;
@@ -371,6 +384,10 @@ static void rotateForward()
 
 static void rotateBackward()
 {
+    uint16_t *freed = frameCache[SLOT_NEXT];
+    frameCache[SLOT_NEXT] = frameCache[SLOT_CUR];
+    frameCache[SLOT_CUR] = frameCache[SLOT_PREV];
+    frameCache[SLOT_PREV] = freed;
     cacheIndex[SLOT_NEXT] = cacheIndex[SLOT_CUR];
     cacheIndex[SLOT_CUR] = cacheIndex[SLOT_PREV];
     cacheIndex[SLOT_PREV] = -1;
@@ -378,11 +395,13 @@ static void rotateBackward()
 
 void GamePhotos::next() {
     if(pictureCount()<=0)return;
+    stepGen++;
     rotateForward();
     index=(index+1)%pictureCount();showCurrent();
 }
 void GamePhotos::previous() {
     if(pictureCount()<=0)return;
+    stepGen++;
     rotateBackward();
     index=(index+pictureCount()-1)%pictureCount();showCurrent();
 }
@@ -403,8 +422,13 @@ void GamePhotos::showCurrent()
 
     // A frame we already hold: copy it and be done. This is the whole point of the cache.
     if (cachePresent(index)) {
-        snprintf(line, sizeof(line), "[photos] %d/%d %s: from cache in %u ms", index + 1,
-                 pictureCount(), currentName(), (unsigned)(millis() - started));
+        // The cache holds panel-order pixels; accumulate the same host-order sum the
+        // decode path reports, so the two logs can be compared.
+        pixelSum = 0;
+        for (int i = 0; i < SCR_W * SCR_H; i++) pixelSum += BSWAP16(fb[i]);
+        snprintf(line, sizeof(line), "[photos] %d/%d %s: from cache in %u ms, sum %08lX",
+                 index + 1, pictureCount(), currentName(), (unsigned)(millis() - started),
+                 (unsigned long)pixelSum);
         Serial.println(line);
         return;
     }
@@ -485,7 +509,15 @@ void GamePhotos::update(float dt)
             if (cacheIndex[SLOT_NEXT] != n && cacheStill(n)
                 && cacheIndex[SLOT_CUR] == index && frameCache[SLOT_CUR]) {
                 const uint32_t t0 = millis();
+                const uint32_t gen = stepGen;
                 const bool ok = decodeEntry(n);
+                if (stepGen != gen) {
+                    // Stepped mid-decode: what is in the framebuffer is not the picture
+                    // that is showing. Redraw the right one rather than papering over it.
+                    Serial.println("[photos] pre-decode abandoned: stepped during it");
+                    showCurrent();
+                    return;
+                }
                 if (ok) {
                     uint16_t *slot = cacheSlot(SLOT_NEXT);
                     if (slot) { memcpy(slot, fb, FRAME_BYTES); cacheIndex[SLOT_NEXT] = n; }
