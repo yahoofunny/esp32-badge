@@ -285,17 +285,105 @@ static bool openGif(const char *path,const clawd_album::Entry *builtIn=nullptr)
 }
 
 // --- the app ------------------------------------------------------------------------
+// --- the frame cache ----------------------------------------------------------------
+// Switching pictures used to re-decode, which is 100-300 ms of nothing for a camera photo.
+// A decoded 360x360 frame is 259 KB of PSRAM and there are 8 MB of it, so three frames --
+// previous, current, next -- turn a step in either direction into a copy. The label strip
+// is drawn after the copy, which is why a cached frame is the picture alone.
+//
+// Animated GIFs are not cached: their frames come from a decoder that keeps the file open,
+// and the animation is the picture. A still is what benefits.
+static const int SLOT_PREV = 0, SLOT_CUR = 1, SLOT_NEXT = 2;
+static const int CACHE_SLOTS = 3;
+static const uint32_t FRAME_BYTES = (uint32_t)SCR_W * SCR_H * 2;
+static uint16_t *frameCache[CACHE_SLOTS] = { nullptr, nullptr, nullptr };
+static int  cacheIndex[CACHE_SLOTS] = { -1, -1, -1 };
+
+static uint16_t *cacheSlot(int slot)
+{
+    if (!frameCache[slot]) {
+        frameCache[slot] = (uint16_t *)heap_caps_malloc(
+            FRAME_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    return frameCache[slot];
+}
+
+static void cacheForget()
+{
+    for (int i = 0; i < CACHE_SLOTS; i++) cacheIndex[i] = -1;
+}
+
+// Is this entry a still picture, i.e. something worth caching? The built-in album entries
+// are animated GIFs, and their names carry no extension.
+static bool cacheStill(int index)
+{
+    const auto *builtIn = clawd_album::at(index);
+    const char *path = builtIn ? builtIn->name
+                               : media::pathAt(index - clawd_album::count());
+    const char *dot = strrchr(path, '.');
+    return dot && strcasecmp(dot + 1, "gif") != 0;
+}
+
+// Copies a cached frame out, if some slot holds this picture.
+static bool cachePresent(int index)
+{
+    for (int i = 0; i < CACHE_SLOTS; i++) {
+        if (cacheIndex[i] != index) continue;
+        if (!frameCache[i]) continue;
+        memcpy(fb, frameCache[i], FRAME_BYTES);
+        return true;
+    }
+    return false;
+}
+
+// One entry decoded into the framebuffer. Both the visible path and the pre-decode below
+// go through here, so there is one place that knows the formats.
+bool GamePhotos::decodeEntry(int index)
+{
+    const auto *builtIn = clawd_album::at(index);
+    const char *path = builtIn ? builtIn->name
+                               : media::pathAt(index - clawd_album::count());
+    const char *dot = strrchr(path, '.');
+    const char *ext = dot ? dot + 1 : "";
+
+    if (!strcasecmp(ext, "bmp")) return showBmp(path);
+    if (!strcasecmp(ext, "gif")) {
+        if (!openGif(path, builtIn)) return false;
+        gifDrew = false;
+        gifLoopPending = playGifFrame(&frameMs) == 0;
+        frameDueMs = millis() + (frameMs > 0 ? frameMs : 100);
+        return gifDrew;
+    }
+    return showJpeg(path);
+}
+
 int GamePhotos::pictureCount() const {return clawd_album::count()+media::count();}
 const char *GamePhotos::currentName() const {
     const auto *entry=clawd_album::at(index);
     return entry?entry->name:media::nameAt(index-clawd_album::count());
 }
+static void rotateForward()
+{
+    cacheIndex[SLOT_PREV] = cacheIndex[SLOT_CUR];
+    cacheIndex[SLOT_CUR] = cacheIndex[SLOT_NEXT];
+    cacheIndex[SLOT_NEXT] = -1;
+}
+
+static void rotateBackward()
+{
+    cacheIndex[SLOT_NEXT] = cacheIndex[SLOT_CUR];
+    cacheIndex[SLOT_CUR] = cacheIndex[SLOT_PREV];
+    cacheIndex[SLOT_PREV] = -1;
+}
+
 void GamePhotos::next() {
     if(pictureCount()<=0)return;
+    rotateForward();
     index=(index+1)%pictureCount();showCurrent();
 }
 void GamePhotos::previous() {
     if(pictureCount()<=0)return;
+    rotateBackward();
     index=(index+pictureCount()-1)%pictureCount();showCurrent();
 }
 void GamePhotos::showCurrent()
@@ -310,27 +398,27 @@ void GamePhotos::showCurrent()
     needsPresent=true;
     if (pictureCount() <= 0) return;
 
-    const auto *builtIn=clawd_album::at(index);
-    const char *path = builtIn?builtIn->name:media::pathAt(index-clawd_album::count());
-    const char *dot = strrchr(path, '.');
-    const char *ext = dot ? dot + 1 : "";
+    const uint32_t started = millis();
+    char line[80];
 
-    bool ok = false;
-    if (!strcasecmp(ext, "bmp")) {
-        ok = showBmp(path);
-    } else if (!strcasecmp(ext, "gif")) {
-        if (openGif(path,builtIn)) {
-            gifDrew = false;
-            gifLoopPending=playGifFrame(&frameMs)==0;
-            ok = gifDrew;
-            frameDueMs=millis()+(frameMs>0?frameMs:100);
-        }
-    } else {
-        ok = showJpeg(path);
+    // A frame we already hold: copy it and be done. This is the whole point of the cache.
+    if (cachePresent(index)) {
+        snprintf(line, sizeof(line), "[photos] %d/%d %s: from cache in %u ms", index + 1,
+                 pictureCount(), currentName(), (unsigned)(millis() - started));
+        Serial.println(line);
+        return;
+    }
+
+    const bool ok = decodeEntry(index);
+    if (ok && cacheStill(index)) {
+        uint16_t *slot = cacheSlot(SLOT_CUR);
+        if (slot) { memcpy(slot, fb, FRAME_BYTES); cacheIndex[SLOT_CUR] = index; }
     }
     failed = !ok;
-    Serial.printf("[photos] %d/%d %s: %s, pixel sum %08lX\n", index + 1, pictureCount(),
-                  currentName(), ok ? "shown" : "FAILED", (unsigned long)pixelSum);
+    snprintf(line, sizeof(line), "[photos] %d/%d %s: %s in %u ms, sum %08lX", index + 1,
+             pictureCount(), currentName(), ok ? "shown" : "FAILED",
+             (unsigned)(millis() - started), (unsigned long)pixelSum);
+    Serial.println(line);
 }
 
 void GamePhotos::enter()
@@ -361,6 +449,7 @@ void GamePhotos::update(float dt)
             input::tapX(),input::tapY(),input::touchHeldMs());
         if (action.toggleFit) {
             fillScreen = !fillScreen;
+            cacheForget();
             Serial.printf("[photos] view: %s\n", fillScreen ? "fill" : "fit");
             showCurrent();
         }
@@ -381,6 +470,33 @@ void GamePhotos::update(float dt)
             const uint32_t delayMs=frameMs>0?frameMs:100;
             frameDueMs+=delayMs;
             if(int32_t(millis()-frameDueMs)>int32_t(delayMs*2))frameDueMs=millis()+delayMs;
+        }
+    }
+    // With a still on screen and nothing else happening, decode the next one into the
+    // cache: draw it into the framebuffer, copy it out, put the visible picture back. The
+    // screen never changes, so the cost is a moment of CPU spent while the user is looking
+    // at the current picture -- exactly the moment a switch would otherwise stall for half
+    // a second on a twelve-megapixel photo.
+    if (!gifOpen && pictureCount() > 1 && !needsPresent) {
+        static uint32_t lastTry = 0;
+        if (millis() - lastTry > 500) {
+            lastTry = millis();
+            const int n = (index + 1) % pictureCount();
+            if (cacheIndex[SLOT_NEXT] != n && cacheStill(n)
+                && cacheIndex[SLOT_CUR] == index && frameCache[SLOT_CUR]) {
+                const uint32_t t0 = millis();
+                const bool ok = decodeEntry(n);
+                if (ok) {
+                    uint16_t *slot = cacheSlot(SLOT_NEXT);
+                    if (slot) { memcpy(slot, fb, FRAME_BYTES); cacheIndex[SLOT_NEXT] = n; }
+                }
+                memcpy(fb, frameCache[SLOT_CUR], FRAME_BYTES);
+                needsPresent = true;
+                char line[64];
+                snprintf(line, sizeof(line), "[photos] predecoded %d/%d in %u ms", n + 1,
+                         pictureCount(), (unsigned)(millis() - t0));
+                Serial.println(line);
+            }
         }
     }
     if(needsPresent)setDirty(0,SCR_H-1);

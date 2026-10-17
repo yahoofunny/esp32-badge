@@ -29,6 +29,10 @@ private:
     photo::Gesture gesture;
 
     void showCurrent();
+    // One entry decoded into the framebuffer. Shared by the visible path and the
+    // pre-decode, so there is one place that knows the formats -- and it is a member
+    // because a GIF's frame clock lives on this object.
+    bool decodeEntry(int index);
     int pictureCount() const;
     const char *currentName() const;
 };
