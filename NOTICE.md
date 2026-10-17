@@ -25,16 +25,18 @@ pet, by way of the blog it was first copied into.
 | `system/assets_pet.h` | the same art at four sizes, the pet's body |
 | `games/clawd-roll/icon.png`, `icon-256.png` | the project icon, composed from it |
 | `system/assets_icons.h` | the same art, posed three ways |
-| `assets/clawd-gifs/*.gif` | 24 original clawd-on-desk animations retained as wardrobe design references |
+| `assets/clawd-gifs/*.gif` | 24 original clawd-on-desk animations used by PHOTOS and as wardrobe references |
+| `system/assets_clawd_album.h` | unchanged GIF bytes embedded in flash by `tools/make_clawd_album.py` |
 | `system/outfits.cpp` | small pixel accessories drawn over the existing pet body, inspired by those references |
 
 The launcher icons are not new artwork: `tools/make_icon_sprites.py` takes the source
 above and moves a few pixel runs in it -- leaning it, raising one arm, adding ears -- so
 the three entries read as three poses of one creature. The pet wardrobe retains 24
 animations from clawd-on-desk's `assets/gif` under `assets/clawd-gifs/` as design
-references. The device draws small accessories with pixel primitives in
-`system/outfits.cpp`; it does not include those complete GIF animations or resize
-the existing pet body.
+references and as complete animated pictures in PHOTOS. The album embeds the original
+GIF bytes unchanged; it does not redraw the artwork. Separately, the pet draws small
+accessories with pixel primitives in `system/outfits.cpp`, preserving its existing
+body dimensions.
 
 This choice of licence is what made AGPL-3.0 the right one for the repository as a
 whole: keeping the art and shipping the source under anything more permissive would
@@ -56,6 +58,17 @@ that matter are the non-mutating push functions in `Display_ST77916.{h,cpp}` and
 auto-sleep fix in `Touch_CST816.{h,cpp}`.
 
 Apache-2.0 is compatible with AGPL-3.0, so the combination is fine.
+
+## SD music decoder — GPL-3.0
+
+`lib/badge_audio_i2s/` contains a local snapshot of
+[schreibfaul1/ESP32-audioI2S](https://github.com/schreibfaul1/ESP32-audioI2S), whose
+source identifies version 3.0.8s (March 23, 2024). Its GPL-3.0 license and decoder
+source notices are retained. Badge-specific changes are documented in
+`lib/badge_audio_i2s/BADGE-NOTES.md`: unique include/source names, 256fs MCLK for
+the ES8311 and disabling the IDF 5 I2S channel before deletion.
+The optional `Badge-Loop.wav` demo is synthesized by this project's own code;
+no third-party recordings or songs are bundled.
 
 ## The pet's design — MIT
 

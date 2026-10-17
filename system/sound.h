@@ -17,6 +17,8 @@ namespace sound {
 // Sets up I2S and the codec, and applies the volume the settings page holds. Safe to call
 // once; returns false if the codec did not answer.
 bool begin();
+// Release I2S and its codec handle while a file player owns the audio hardware.
+bool suspend();
 
 // One note, non-blocking. A later call replaces whatever is playing: there is one voice
 // and no mixer, which is exactly the constraint an eight-bit machine worked under.

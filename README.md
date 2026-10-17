@@ -6,7 +6,10 @@
 - **同一只宠物**：蛋、七种成长形态、喂食、抚摸、拖动、休息和清洁；对话时保留形态与配饰，显示表情和中文字幕。
 - **20 种像素配饰**：花朵、安全帽、耳机、巫师帽等叠加在原身体上，体型和比例保持一致；衣柜支持预览、取消和保存。
 - **手指拖转主页**：沿应用圆环滑动，松手吸附，点击打开；主页没有左上角时钟。
-- **满屏相册**：默认等比居中裁剪铺满，长按约 **650ms** 切换完整显示，再长按恢复铺满。
+- **满屏相册**：左右滑动或点击左右两侧翻页，底部显示页码；长按约 **650ms** 保持原来的全屏 / 原显示状态切换。
+- **24 个内置 Clawd 动图**：打字、思考、睡觉、扫地、戴耳机和迷你形态等；原样保留动画，离线可看，SD 卡照片继续追加。
+- **HYPNO 摆钟**：金色怀表左右摆动，背景同心圆缓慢收拢；点击暂停/继续，底部减号、加号切换三档速度。
+- **MUSIC 本地播放器**：SD 卡 MP3、WAV 等音频，上一首/下一首、暂停/继续、进度和音量；空音乐目录可自动生成原创演示旋律。
 - **USB 连接提示与省电休眠**：电脑插拔及零电流读数的自动恢复已通过实机验证；CHARGE ONLY 熄屏休眠，按 BOOT 唤醒。充电状态仅显示在设置里。
 - **触摸与绘制分开调度**：输入目标 **20ms**，本机实测约 **30ms**；省电只降低绘制频率，按下即唤醒并高亮，松手执行一次，反馈保留约 **150ms**。
 
@@ -19,6 +22,10 @@
 | ![保持同一身体比例的衣柜，软件渲染](docs/images/pet-wardrobe.png) | ![宠物语音状态，软件渲染](docs/images/pet-voice.png) |
 
 *图示由共享 C++ 绘制代码生成，非 LCD 实拍；语音图不包含 LVGL 中文字幕覆盖层。*
+
+<img src="docs/images/hypno.png" width="240" alt="HYPNO 金色怀表与同心圆，实际 C++ 软件渲染">
+<img src="docs/images/music.png" width="240" alt="MUSIC 黑胶唱片界面，实际 C++ 软件渲染，曲目和时间为演示数据">
+<img src="docs/images/photos.png" width="240" alt="PHOTOS 相册，设备实际 framebuffer 读回：透明背景与页码">
 
 Quick links: **[Build and update](#build-and-update)** · **[Voice integration and controls](docs/clawd-pet-voice.md)** · **[Hardware](docs/hardware.md)** · **[Verification](#verification)** · **[Firmware slots](#firmware-slots)**
 
@@ -52,10 +59,11 @@ The USB-C port is wired straight to the chip's native USB-Serial/JTAG
 esp32-badge/
 ├── system/                    the firmware that runs on the badge (launcher + games)
 ├── firmware/clawd_pet/         ESP-IDF voice display, input adapter and UI pacing
-├── assets/clawd-gifs/          deduplicated artwork references; not full GIF pets in firmware
+├── assets/clawd-gifs/          24 original animations for PHOTOS and wardrobe references
 ├── games/clawd-roll/          the same game as a standalone sketch, no launcher
 ├── lib/
-│   └── board_drivers/         shared Arduino library: ST77916 panel, CST816 touch, I2C
+│   ├── board_drivers/         shared Arduino library: ST77916 panel, CST816 touch, I2C
+│   └── badge_audio_i2s/        isolated local audio decoder, 256fs MCLK and I2S cleanup fixes
 ├── docs/
 │   └── hardware.md            pin map, free GPIOs, expansion notes
 ├── tools/
@@ -177,11 +185,15 @@ python tools/preview_pet.py        # render the shared pet code; also needs Pill
 python tools/preview_launcher.py   # Python preview of the launcher layout
 python tools/preview_readme.py     # regenerate README images from actual C++ drawing; needs Pillow
 python tools/preview_power.py      # render the POWER page with a charging fixture
+python tools/preview_hypno.py --animation # actual C++ frame and optional swing GIF
+python tools/preview_music.py      # actual music screen with a deterministic track fixture
+python tools/make_clawd_album.py --check # embedded GIFs match the original assets
 ```
 
 Checks cover photo scaling and crop boundaries, ring dragging and snapping,
 save migration, care, wardrobe persistence, accessory clipping in both RGB565 byte
-orders, button press/release feedback, BQ27220 charging state and UI pacing across timer wrap. Host renders
+orders, button press/release feedback, BQ27220 charging state, HYPNO touch/speed/pause
+and UI pacing across timer wrap. Host renders
 complement device checks; they do not measure LCD transfer or touch-controller latency.
 
 The launcher's LCD path copies PSRAM pixels into a reusable 8-row internal DMA
@@ -209,6 +221,9 @@ system/
 ├── game_pet.{h,cpp}      CLAWD PET: care, egg, evolution, gestures and voice presentation
 ├── outfits.{h,cpp}       twenty accessories over the existing pet body
 ├── game_photos.{h,cpp}   SD-card photos and animations, fill / fit toggle
+├── clawd_album.{h,cpp}   24 built-in original Clawd GIFs, read directly from flash
+├── game_hypno.{h,cpp}    swinging pocket watch, pause and three speed settings
+├── game_music.{h,cpp}    SD audio player, controls and audio-driver ownership
 ├── game_settings.{h,cpp} volume, and what is under the hood
 ├── power.{h,cpp}         the BQ27220 fuel gauge
 ├── clawd_sprite.h        the sprite + palette, shared by both games
@@ -219,7 +234,7 @@ system/
 └── partitions.csv        must match the installed layout — see Firmware slots below
 ```
 
-The five launcher entries are CLAWD ROLL, CLAWD TAP, CLAWD PET, PHOTOS and SETTINGS.
+The seven launcher entries are CLAWD ROLL, CLAWD TAP, CLAWD PET, PHOTOS, MUSIC, HYPNO and SETTINGS.
 Each module draws its own icon; the pet has one entry for both care and voice.
 CLAWD PET keeps its classic orange launcher icon; inside the app, the creature's
 body color continues to follow its current evolution form.
@@ -277,9 +292,49 @@ to the nearest app. Tap an icon or the centre to open it. Tilt remains optional 
 is suppressed during touch. The home screen has no clock. Hold BOOT in a game to
 return home; in the voice pet a long press returns to the launcher firmware.
 
-**PHOTOS.** Tap to advance; hold for 650ms to toggle centre-cropped full-screen view
-and complete-image fit. The default fills the round panel, without a filename bar.
-Baseline JPEG, BMP and animated GIF are supported. Unsupported images show an error.
+**PHOTOS.** Includes **24 distinct original Clawd GIFs**, followed by the SD card's
+`/Photos` contents. Swipe left for next and right for previous, or tap the right/left
+side. The bottom shows the current index and total. Holding for 650ms keeps its
+original function: toggle centre-cropped full-screen view and complete-image fit;
+release after a hold never advances the picture. The default fills the round panel.
+Built-in full-screen view centers the visible artwork with a consistent body scale;
+complete-image view retains the original canvas. Transparent pixels use the dark
+background, with previous-frame disposal and per-frame palettes composited correctly.
+GIF coordinates are cached, deadlines use wall-clock time, and unchanged pictures
+produce no redundant LCD transfers.
+The built-in GIFs play with no SD card and are read
+directly from flash, without loading the whole album into RAM or changing existing
+SD files. Baseline JPEG, BMP and animated GIF are supported for SD pictures.
+`tools/make_clawd_album.py` embeds the deduplicated source bytes unchanged (1,947,672
+bytes of flash), and `--check` verifies that the generated header still matches.
+Serial `P` opens PHOTOS, `N` advances and `J` goes back for device checks.
+Serial `D` reports actual animation FPS and decode/compose/scale timing; `F` captures
+the current framebuffer. `python tools/verify_album_frames.py` compares all 1,262
+source animation frames against independent Pillow decoding, pixel for pixel.
+That check requires g++, Pillow, NumPy and a local AnimatedGIF source installation;
+use `--gif-library /path/to/AnimatedGIF/src` to override its location. All 24 gallery
+entries have also been captured from the physical board and matched to source frames;
+the corrected background, animation and size were confirmed on the device.
+On the physical board, three sampled animations ran at 14.88–14.98fps (the source
+frames alternate 60/70ms). The previous compositor/cadence ran at 9.53–10.07fps.
+This leaves the original animations intact rather than replacing them with stills.
+
+**MUSIC.** Reads MP3, WAV, AAC/M4A, FLAC and Ogg files in the card's `/Music`
+folder. The three bottom controls are previous, pause/resume and next; the progress
+bar seeks and the upper `−` / `+` controls adjust volume. Tracks wrap around at EOF.
+When the folder has no supported music, an original eight-second PCM WAV demo is
+created as `/Music/Badge-Loop.wav`; existing user tracks are not replaced.
+Hold BOOT for about 900ms to return home. Entering/exiting releases and restores
+the I2S driver without a reboot; the local decoder fork uses the ES8311's 256fs
+MCLK and disables its IDF 5 channel before deleting it. Serial `M` opens the player,
+`V` pauses/resumes, `N` / `J` change tracks and `D` reports playback time and PCM counters.
+
+**HYPNO.** A gold pocket watch swings on a linked chain over slowly contracting
+concentric rings. Tap the scene or the middle pause/play button to stop or resume;
+use `−` / `+` for SLOW, NORMAL or FAST (3.8 / 2.8 / 1.9 seconds per full swing).
+Dragging cancels a tap. Animation targets 30fps, with immediate button feedback;
+paused frames produce no redundant LCD transfers. Hold BOOT for about 900ms to return
+to the launcher. Each entry starts at NORMAL speed and does not alter saved pet or battery data.
 
 ```bash
 ./tools/deploy_game.sh system          # update the launcher app in factory; keep ota_0
@@ -602,12 +657,16 @@ header. Details in [docs/hardware.md](docs/hardware.md).
 
 ## Current status and next work
 
-- [x] Touch-drag launcher ring, snapping, tilt support and five app entries
+- [x] Touch-drag launcher ring, snapping, tilt support and seven app entries
+- [x] HYPNO swinging pocket watch, three speeds, pause/resume and circular-screen preview
 - [x] CLAWD ROLL and CLAWD TAP mini-games
 - [x] Unified CLAWD PET care, eggs, seven evolution forms and migrated saves
 - [x] Integrated XiaoZhi voice, expressions, Chinese subtitles and shared pet state
 - [x] Twenty accessories with unchanged body proportions and persistent selection
 - [x] SD-card photos / GIFs with full-screen crop and complete-image fit
+- [x] Twenty-four built-in Clawd GIFs, available offline alongside SD-card photos
+- [x] Photo left/right navigation and page index, with original hold-to-fill/fit retained
+- [x] Local SD music player with pause, track switching, seeking and volume controls
 - [x] Independent touch scanning, wake on contact and visible button feedback
 - [ ] Longer battery-life and simultaneous voice/care soak tests
 - [ ] Broader media-file and SD-card compatibility checks

@@ -72,6 +72,7 @@ namespace sound {
 
 bool begin()
 {
+    if(ready)return true;
     // Codec first, then the clocks. This is the order the vendor example uses, and the
     // codec's divisors are computed from the configured rate rather than measured, so
     // nothing depends on the order -- but it is one fewer difference from a path that is
@@ -140,6 +141,14 @@ void stop()
     nextMs = 0;
     digitalWrite(PIN_PA, LOW);
     ready = false;
+}
+
+bool suspend() {
+    stop();
+    const bool ok=i2s.end();
+    if(codec){es8311_delete(codec);codec=nullptr;}
+    Serial.printf("[sound] I2S released=%d\n",ok);
+    return ok;
 }
 
 // --- the system's sounds --------------------------------------------------------

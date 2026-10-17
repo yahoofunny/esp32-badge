@@ -1,15 +1,10 @@
 #pragma once
 
 #include "game.h"
+#include "photo_gesture.h"
 
-// The pictures in /Photos, full screen.
-//
-// Three formats for three reasons: BMP because it is a few lines to read and is the
-// lossless one for pixel art, JPEG because that is what a camera produces, and GIF
-// because an animated one is half the point of a badge sitting on a desk.
-//
-// The folder is the interface -- see media.h. Drop files in and they appear, in the order
-// the card lists them; a tap moves to the next.
+// Built-in Clawd animations followed by /Photos. Swipe/tap left or right to
+// browse; holding still toggles the full-screen and complete original views.
 class GamePhotos : public Game {
 public:
     const char *name() const override { return "PHOTOS"; }
@@ -20,13 +15,20 @@ public:
     void leave() override;
     void update(float dt) override;
     void render() override;
+    void next();
+    void previous();
+    void printDiagnostics() const;
+    void captureFrame() const;
 
 private:
     int   index = 0;
     bool  failed = false;
-    float frameSec = 0.0f;
+    uint32_t frameDueMs = 0;
     int   frameMs = 0;
-    bool  longPressFired = false;
+    bool needsPresent = true;
+    photo::Gesture gesture;
 
     void showCurrent();
+    int pictureCount() const;
+    const char *currentName() const;
 };

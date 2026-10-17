@@ -34,6 +34,8 @@
 #include "game_clawd.h"
 #include "game_pet.h"
 #include "game_photos.h"
+#include "game_hypno.h"
+#include "game_music.h"
 #include "game_settings.h"
 #include "game_tap.h"
 #include "game_xiaozhi.h"
@@ -55,8 +57,10 @@ static GameTap     g_tap;
 static GamePet     g_pet;
 static GameSettings g_settings;
 static GamePhotos   g_photos;
+static GameHypno    g_hypno;
+static GameMusic    g_music;
 
-static Game *const GAMES[] = { &g_clawd, &g_tap, &g_pet, &g_photos, &g_settings };
+static Game *const GAMES[] = { &g_clawd, &g_tap, &g_pet, &g_photos, &g_music, &g_hypno, &g_settings };
 static const int   GAME_COUNT = (int)(sizeof(GAMES) / sizeof(GAMES[0]));
 
 // ----------------------------------------------------------------- screens ---
@@ -293,12 +297,34 @@ void loop()
                     active->enter();
                     screen = SCREEN_GAME;
                     Serial.println("[sys] diagnostics: SETTINGS opened");
+                } else if (!strcmp(cmd, "Y")) {
+                    if (active) active->leave();
+                    active = &g_hypno;
+                    active->enter();
+                    screen = SCREEN_GAME;
+                    Serial.println("[sys] diagnostics: HYPNO opened");
+                } else if (!strcmp(cmd, "N")) {
+                    if (active==&g_photos) g_photos.next();
+                    else if(active==&g_music)g_music.nextTrack();
+                } else if (!strcmp(cmd, "J")) {
+                    if(active==&g_photos)g_photos.previous();
+                    else if(active==&g_music)g_music.nextTrack(-1);
+                } else if (!strcmp(cmd, "M")) {
+                    if(active)active->leave();
+                    active=&g_music;active->enter();screen=SCREEN_GAME;
+                    Serial.println("[sys] diagnostics: MUSIC opened");
+                } else if (!strcmp(cmd, "V")) {
+                    if(active==&g_music)g_music.togglePlayback();
                 } else if (!strcmp(cmd, "D")) {
                     Serial.printf("[sys] screen=%s app=%s heap=%u internal=%u psram=%u lcd=%u\n",
                         screen == SCREEN_LAUNCHER ? "launcher" : "app",
                         active ? active->name() : "none", ESP.getFreeHeap(),
                         heap_caps_get_free_size(MALLOC_CAP_INTERNAL), ESP.getFreePsram(),
                         LCD_completedTransfers());
+                    if(active==&g_music)g_music.printDiagnostics();
+                    if(active==&g_photos)g_photos.printDiagnostics();
+                } else if (!strcmp(cmd,"F")) {
+                    if(active==&g_photos)g_photos.captureFrame();
                 } else if (!strcmp(cmd, "B")) {
                     const auto b=power::cached();
                     Serial.printf("[power] usb_host=%d %s valid=%d %d%% %dmV %+dmA flags=%04x\n",

@@ -7,3 +7,5 @@
 *.bin binary
 *.zip binary
 *.pdf binary
+system/assets_clawd_album.h linguist-generated=true
+lib/badge_audio_i2s/** linguist-vendored=true -whitespace

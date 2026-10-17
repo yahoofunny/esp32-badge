@@ -13,6 +13,8 @@
 #include "input.h"
 #include "media.h"
 #include "photo_blit.h"
+#include "photo_gif.h"
+#include "clawd_album.h"
 #include "esp_heap_caps.h"
 
 static const char *const PHOTO_EXTS[] = { "jpg", "jpeg", "bmp", "gif" };
@@ -168,6 +170,26 @@ static AnimatedGIF *gif = nullptr;
 static Fit gifFit;
 static bool gifOpen = false;
 static bool gifDrew = false;
+static bool gifLoopPending=false;
+static uint16_t *gifPixels=nullptr,*gifRestore=nullptr;
+static photo::GifCanvas gifCanvas;
+static photo::GifView gifView;
+static uint32_t perfStart=0,perfFrames=0,perfDecodeUs=0,perfMaxUs=0,perfBlitUs=0;
+static uint32_t perfScaleUs=0;
+static uint32_t perfBlitStart=0;
+
+static int playGifFrame(int *delayMs) {
+    const uint32_t started=micros();
+    const int result=gif->playFrame(false,delayMs);
+    const uint32_t elapsed=micros()-started;
+    if(gifDrew){
+        ++perfFrames;perfDecodeUs+=elapsed;if(elapsed>perfMaxUs)perfMaxUs=elapsed;
+        const uint32_t scaleStart=micros();gifView.draw(fb,gifPixels);
+        perfScaleUs+=micros()-scaleStart;
+        if(perfFrames==1)for(int i=0;i<SCR_W*SCR_H;++i)pixelSum+=fb[i];
+    }
+    return result;
+}
 
 static void *gifAlloc(uint32_t size)
 {
@@ -178,17 +200,18 @@ static void closeGif()
 {
     if (!gifOpen) return;
     gif->close();
-    gif->freeFrameBuf(free);
+    free(gifPixels);free(gifRestore);gifPixels=gifRestore=nullptr;
     gifOpen = false;
 }
 
 static void gifDrawCb(GIFDRAW *d)
 {
+    perfBlitStart=micros();
     gifDrew = true;
-    // GIF_DRAW_COOKED is explicitly enabled below: this is RGB565, not palette indices.
-    // pPixels is declared as bytes but in this mode it is 16-bit pixels, one row of
-    // iWidth of them, at the frame's own offset in the canvas.
-    blitLine((const uint16_t *)d->pPixels, d->iX, d->iY + d->y, d->iWidth, gifFit);
+    if(d->y==0)gifCanvas.frame(d->iX,d->iY,d->iWidth,d->iHeight,d->ucDisposalMethod);
+    gifCanvas.line(d->iX,d->iY+d->y,d->iWidth,d->pPixels,d->pPalette,
+                   d->ucHasTransparency,d->ucTransparent);
+    perfBlitUs+=micros()-perfBlitStart;
 }
 
 static void *GIFOpenFile(const char *fname, int32_t *pSize)
@@ -227,39 +250,68 @@ static int32_t GIFSeekFile(GIFFILE *pFile, int32_t iPosition)
     return pFile->iPos;
 }
 
-static bool openGif(const char *path)
+static bool openGif(const char *path,const clawd_album::Entry *builtIn=nullptr)
 {
     if (!gif) gif = new AnimatedGIF();
     gif->begin(LITTLE_ENDIAN_PIXELS);      // the callback then hands over RGB565
-    if (!gif->open(path, GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, gifDrawCb)) {
+    // AnimatedGIF's flash API is read-only despite its historical uint8_t* argument.
+    const bool opened=builtIn
+        ?gif->openFLASH(const_cast<uint8_t*>(builtIn->data),builtIn->size,gifDrawCb)
+        :gif->open(path,GIFOpenFile,GIFCloseFile,GIFReadFile,GIFSeekFile,gifDrawCb);
+    if (!opened) {
         Serial.printf("[photos] gif: open failed (%d)\n", gif->getLastError());
         return false;
     }
     gifFit = fitFor(gif->getCanvasWidth(), gif->getCanvasHeight());
     gifOpen = true;
     const int w = gif->getCanvasWidth(), h = gif->getCanvasHeight();
-    if (w <= 0 || h <= 0 || (uint64_t)w * (h + 3) > 2 * 1024 * 1024 ||
-        gif->allocFrameBuf(gifAlloc) != GIF_SUCCESS) {
+    if (w <= 0 || h <= 0 || uint64_t(w)*h*4>4*1024*1024 ||
+        !(gifPixels=(uint16_t*)gifAlloc(w*h*2)) ||
+        !(gifRestore=(uint16_t*)gifAlloc(w*h*2))) {
         Serial.println("[photos] gif: canvas too large or no PSRAM");
         closeGif();
         return false;
     }
-    gif->setDrawType(GIF_DRAW_COOKED);
+    gifCanvas.begin(w,h,gifPixels,gifRestore);
+    if(builtIn&&fillScreen) {
+        // Consistent body scale, centered visible composition, including every
+        // frame's accessories. Empty transparent source margins are not art.
+        gifView.beginContent(w,h,builtIn->contentX,builtIn->contentY,
+                            builtIn->contentW,builtIn->contentH);
+    } else gifView.begin(w,h,gifFit.width,gifFit.height,gifFit.offX,gifFit.offY);
+    gifLoopPending=false;
+    gif->setDrawType(GIF_DRAW_RAW);
     return true;
 }
 
 // --- the app ------------------------------------------------------------------------
+int GamePhotos::pictureCount() const {return clawd_album::count()+media::count();}
+const char *GamePhotos::currentName() const {
+    const auto *entry=clawd_album::at(index);
+    return entry?entry->name:media::nameAt(index-clawd_album::count());
+}
+void GamePhotos::next() {
+    if(pictureCount()<=0)return;
+    index=(index+1)%pictureCount();showCurrent();
+}
+void GamePhotos::previous() {
+    if(pictureCount()<=0)return;
+    index=(index+pictureCount()-1)%pictureCount();showCurrent();
+}
 void GamePhotos::showCurrent()
 {
     closeGif();
     gfx::clear(COL_BG);
     failed = false;
     pixelSum = 0;
-    frameSec = 0.0f;
+    frameDueMs = 0;
     frameMs = 0;
-    if (media::count() <= 0) return;
+    perfStart=millis();perfFrames=perfDecodeUs=perfMaxUs=perfBlitUs=perfScaleUs=0;
+    needsPresent=true;
+    if (pictureCount() <= 0) return;
 
-    const char *path = media::pathAt(index);
+    const auto *builtIn=clawd_album::at(index);
+    const char *path = builtIn?builtIn->name:media::pathAt(index-clawd_album::count());
     const char *dot = strrchr(path, '.');
     const char *ext = dot ? dot + 1 : "";
 
@@ -267,31 +319,30 @@ void GamePhotos::showCurrent()
     if (!strcasecmp(ext, "bmp")) {
         ok = showBmp(path);
     } else if (!strcasecmp(ext, "gif")) {
-        if (openGif(path)) {
+        if (openGif(path,builtIn)) {
             gifDrew = false;
-            gif->playFrame(false, &frameMs);
+            gifLoopPending=playGifFrame(&frameMs)==0;
             ok = gifDrew;
+            frameDueMs=millis()+(frameMs>0?frameMs:100);
         }
     } else {
         ok = showJpeg(path);
     }
     failed = !ok;
-    Serial.printf("[photos] %d/%d %s: %s, pixel sum %08lX\n", index + 1, media::count(),
-                  media::nameAt(index), ok ? "shown" : "FAILED", (unsigned long)pixelSum);
+    Serial.printf("[photos] %d/%d %s: %s, pixel sum %08lX\n", index + 1, pictureCount(),
+                  currentName(), ok ? "shown" : "FAILED", (unsigned long)pixelSum);
 }
 
 void GamePhotos::enter()
 {
-    longPressFired = false;
+    gesture.reset();
     failed = false;
     pixelSum = 0;
-    if (!media::begin()) {
-        failed = true;
-        return;
-    }
+    media::begin(); // Built-in photos remain available with no SD card.
     media::list(media::PHOTOS_DIR, PHOTO_EXTS, PHOTO_EXT_COUNT);
+    Serial.printf("[photos] album: %d built-in + %d SD pictures\n",clawd_album::count(),media::count());
     index = 0;
-    if (media::count() > 0) showCurrent();
+    if (pictureCount() > 0) showCurrent();
     setDirty(0, SCR_H - 1);
 }
 
@@ -304,40 +355,55 @@ void GamePhotos::leave()
 
 void GamePhotos::update(float dt)
 {
-    if (media::count() > 0) {
-        if (input::touchDown() && input::touchHeldMs() >= 650 && !longPressFired) {
-            longPressFired = true;
+    setDirty(1,0);
+    if (pictureCount() > 0) {
+        const auto action=gesture.update(input::touchDown(),input::tapped(),
+            input::tapX(),input::tapY(),input::touchHeldMs());
+        if (action.toggleFit) {
             fillScreen = !fillScreen;
             Serial.printf("[photos] view: %s\n", fillScreen ? "fill" : "fit");
             showCurrent();
         }
-        if (input::tapped()) {
-            if (!longPressFired) {
-                index = (index + 1) % media::count();
-                showCurrent();
-            }
-            longPressFired = false;
-        }
+        if(action.step>0)next();
+        else if(action.step<0)previous();
     }
 
     // An animated GIF keeps its file open and is stepped from here; a still one has one
     // frame and playFrame then returns false.
     if (gifOpen) {
-        frameSec += dt;
-        if (frameSec * 1000.0f >= (float)(frameMs > 0 ? frameMs : 100)) {
-            frameSec = 0.0f;
-            if (!gif->playFrame(false, &frameMs)) {
-                // Keep animated badges playing instead of stopping after one pass.
-                gif->reset();
-            }
+        const uint32_t now=millis();
+        if (int32_t(now-frameDueMs)>=0) {
+            if(gifLoopPending){gif->reset();gifCanvas.reset();gifLoopPending=false;}
+            gifDrew=false;
+            const int result=playGifFrame(&frameMs);
+            gifLoopPending=result==0;
+            if(gifDrew)needsPresent=true;
+            const uint32_t delayMs=frameMs>0?frameMs:100;
+            frameDueMs+=delayMs;
+            if(int32_t(millis()-frameDueMs)>int32_t(delayMs*2))frameDueMs=millis()+delayMs;
         }
     }
-    setDirty(0, SCR_H - 1);
+    if(needsPresent)setDirty(0,SCR_H-1);
+}
+
+void GamePhotos::printDiagnostics() const {
+    const uint32_t elapsed=millis()-perfStart;
+    Serial.printf("[photos-perf] file=%s frames=%u elapsed_ms=%u fps=%.2f decode_avg_us=%u decode_max_us=%u compose_avg_us=%u scale_avg_us=%u delay_ms=%d\n",
+        currentName(),perfFrames,elapsed,elapsed?perfFrames*1000.0f/elapsed:0,
+        perfFrames?perfDecodeUs/perfFrames:0,perfMaxUs,perfFrames?perfBlitUs/perfFrames:0,
+        perfFrames?perfScaleUs/perfFrames:0,frameMs);
+}
+void GamePhotos::captureFrame() const {
+    Serial.printf("[photos-frame] %d %d %u\n",SCR_W,SCR_H,unsigned(SCR_W*SCR_H*2));
+    Serial.write((const uint8_t*)fb,SCR_W*SCR_H*2);
+    Serial.println("\n[photos-frame-end]");
 }
 
 void GamePhotos::render()
 {
-    if (media::count() <= 0) {
+    if(!needsPresent)return;
+    needsPresent=false;
+    if (pictureCount() <= 0) {
         gfx::clear(COL_BG);
         gfx::textCentered("no pictures", 148, COL_DIM, 2);
         gfx::textCentered(media::mounted() ? "put them in /Photos" : "no card", 192,
@@ -351,9 +417,15 @@ void GamePhotos::render()
         gfx::textCentered("try a baseline JPG or BMP", 165, COL_TEXT, 1);
         gfx::textCentered("tap for next picture", 190, COL_DIM, 1);
         char line[32];
-        snprintf(line, sizeof(line), "%.24s", media::nameAt(index));
+        snprintf(line, sizeof(line), "%.24s", currentName());
         gfx::textCentered(line, 215, COL_DIM, 1);
     }
+    // Always redraw after GIF pixels; this stays inside the round panel's chord.
+    const uint16_t panel=PX(RGB565(0x12,0x12,0x20));
+    gfx::fillCircle(145,337,12,panel);gfx::fillCircle(215,337,12,panel);
+    gfx::fillRect(145,325,70,24,panel);
+    char count[24];snprintf(count,sizeof count,"%d / %d",index+1,pictureCount());
+    gfx::textCentered(count,333,COL_TEXT,1);
 }
 
 void GamePhotos::drawIcon(float cx, float cy, float size) const
