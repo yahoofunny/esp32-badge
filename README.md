@@ -287,7 +287,8 @@ the integrated voice pet retains its own assistant networking configuration.
 3. 选择音乐或照片，可批量上传，网页显示进度和 SD 卡文件列表。
 4. 完成后在吧唧点 STOP / BACK，或长按 BOOT 返回主页，再打开 MUSIC / PHOTOS 即可重新扫描。
 
-音乐支持 MP3、WAV、M4A/AAC、FLAC、OGG。网页将静态 JPG/PNG/WebP 转为最长边
+音乐支持 MP3、WAV、M4A/AAC、FLAC、OGG。音乐选择器显示所有文件，选中后再检查格式，
+避免部分手机将 FLAC 错误置灰；从手机“文件”中选择即可。网页将静态 JPG/PNG/WebP 转为最长边
 1280 像素的 JPG，兼容相册解码器；GIF 和 BMP 原样上传，GIF 保留动画。
 单个上传文件上限 50 MiB，每个文件夹最多 64 个媒体文件。同名文件自动添加数字后缀，
 已有内容不覆盖；上传中断会删除临时数据，完整写入后才加入歌单或相册。

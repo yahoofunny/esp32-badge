@@ -24,18 +24,24 @@ let fail=false;
   });
   await page.goto('http://badge.test/');
   await page.waitForFunction(()=>document.querySelector('#files').textContent.includes('Calm.wav'));
+  // Some phone document providers cannot classify FLAC for extension/MIME filters.
+  // Keep the native picker unrestricted; validate supported extensions afterwards.
+  assert.equal(await page.locator('#music').getAttribute('accept'),null);
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   await page.getByRole('button',{name:'上传音乐'}).click();
   await page.waitForFunction(()=>document.querySelector('#result').textContent==='请先选择文件');
   const audio=Buffer.from('RIFF'+'.'.repeat(4096));
+  const flac=Buffer.from('fLaC'+'flac-fixture'.repeat(100));
   await page.locator('#music').setInputFiles([
    {name:'Calm.wav',mimeType:'audio/wav',buffer:audio},
-   {name:'花朵.mp3',mimeType:'audio/mpeg',buffer:Buffer.from('ID3fixture')}
+   {name:'花朵.mp3',mimeType:'audio/mpeg',buffer:Buffer.from('ID3fixture')},
+   {name:'Night.FLAC',mimeType:'application/octet-stream',buffer:flac}
   ]);
   await page.getByRole('button',{name:'上传音乐'}).click();
-  await page.waitForFunction(()=>document.querySelector('#result').textContent.includes('已完成 2 个文件。关闭'));
+  await page.waitForFunction(()=>document.querySelector('#result').textContent.includes('已完成 3 个文件。关闭'));
   assert.equal(writes[0].name,'Calm (1).wav');assert(writes[0].body.equals(audio));
   assert.equal(writes[1].name,'花朵.mp3');
+  assert.equal(writes[2].name,'Night.FLAC');assert(writes[2].body.equals(flac));
   const png=await page.evaluate(async()=>{const c=document.createElement('canvas');c.width=2000;c.height=1000;
    const g=c.getContext('2d');g.fillStyle='#e68d65';g.fillRect(0,0,2000,1000);
    return [...new Uint8Array(await (await new Promise(r=>c.toBlob(r,'image/png'))).arrayBuffer())];});
@@ -47,20 +53,25 @@ let fail=false;
   ]);
   await page.getByRole('button',{name:'上传照片'}).click();
   await page.waitForFunction(()=>document.querySelector('#result').textContent.includes('已完成 2 个文件。关闭'));
-  assert.equal(writes[2].name,'Flower.jpg');assert.equal(writes[2].body.readUInt16BE(0),0xffd8);
-  const dimensions=await page.evaluate(async data=>{const im=await createImageBitmap(new Blob([new Uint8Array(data)],{type:'image/jpeg'}));return [im.width,im.height]},[...writes[2].body]);
-  assert.deepEqual(dimensions,[1280,640]);assert(writes[3].body.equals(gif));
+  assert.equal(writes[3].name,'Flower.jpg');assert.equal(writes[3].body.readUInt16BE(0),0xffd8);
+  const dimensions=await page.evaluate(async data=>{const im=await createImageBitmap(new Blob([new Uint8Array(data)],{type:'image/jpeg'}));return [im.width,im.height]},[...writes[3].body]);
+  assert.deepEqual(dimensions,[1280,640]);assert(writes[4].body.equals(gif));
   await page.screenshot({path:path.join(root,'docs/images/wifi-transfer-web.png'),fullPage:true});
   // Existing SD names must be treated as text, even when supplied outside this UI.
   files.music.push({name:'<img src=x onerror=alert(1)>.mp3',bytes:10});
   await page.getByRole('button',{name:'刷新',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('#files').textContent.includes('<img'));
   assert.equal(await page.locator('#files img').count(),0);
+  const countBefore=writes.length;
+  await page.locator('#music').setInputFiles({name:'Unsupported.zip',mimeType:'application/zip',buffer:audio});
+  await page.getByRole('button',{name:'上传音乐'}).click();
+  await page.waitForFunction(()=>document.querySelector('#result').textContent.includes('不是支持的音乐格式'));
+  assert.equal(writes.length,countBefore);
   fail=true;
   await page.locator('#music').setInputFiles({name:'Failure.wav',mimeType:'audio/wav',buffer:audio});
   await page.getByRole('button',{name:'上传音乐'}).click();
   await page.waitForFunction(()=>document.querySelector('#result').textContent.includes('SD 卡写入失败'));
   assert(await page.getByRole('button',{name:'上传音乐'}).isEnabled());assert.deepEqual(errors,[]);
-  console.log('PASS: embedded mobile page, music bytes/Unicode/batch/collision response, static JPEG conversion/size, unchanged animated GIF, safe names, error recovery and no overflow');
+  console.log('PASS: unrestricted picker, opaque-MIME FLAC bytes/case, post-selection format validation, music Unicode/batch/collision response, static JPEG conversion/size, unchanged GIF, safe names and error recovery');
  }finally{await browser.close()}
 })().catch(e=>{console.error(e);process.exitCode=1});
