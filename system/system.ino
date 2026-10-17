@@ -216,6 +216,40 @@ void setup()
 
 }
 
+// Bounded low-load probe. No reset, sleep, USB detach or gauge writes:
+// keep the failing state alive while reducing display/CPU/amplifier consumption.
+static void comparePowerLoad(bool diagnostic)
+{
+    const uint32_t duty = ledcRead(5);
+    const int amp = digitalRead(9);
+    const uint32_t cpu = getCpuFrequencyMhz();
+    Serial.printf("[power-probe] %s begin; automatic restore\n",diagnostic?"diagnostic":"USB recovery");
+    if (diagnostic) power::printDiagnostics();
+    LCD_waitTrans();
+    ledcWrite(5,0);
+    digitalWrite(9,LOW);
+    setCpuFrequencyMhz(80);
+    const uint32_t started = millis();
+    uint32_t reportAt = started;
+    while ((uint32_t)(millis()-started) < (diagnostic?30000u:4000u)) {
+        power::poll(millis());
+        const auto b = power::cached();
+        if ((int32_t)(millis()-reportAt) >= 0) {
+            Serial.printf("[power-probe] low elapsed=%u usb=%d current=%d voltage=%d flags=%04x cpu=%u\n",
+                millis()-started,b.usbHostConnected,b.milliamps,b.millivolts,b.batteryStatus,getCpuFrequencyMhz());
+            if (diagnostic) power::printDiagnostics();
+            reportAt += 1000;
+        }
+        if (!diagnostic && uint32_t(millis()-started)>=2000 && b.state==power::ChargeState::Charging) break;
+        if (!b.usbHostConnected || digitalRead(0)==LOW) break;
+        delay(20);
+    }
+    setCpuFrequencyMhz(cpu);
+    digitalWrite(9,amp);
+    ledcWrite(5,duty);
+    Serial.println("[power-probe] restored normal operation, no reset");
+}
+
 void loop()
 {
     static unsigned long lastMs = millis();
@@ -269,6 +303,8 @@ void loop()
                     Serial.printf("[power] usb_host=%d %s valid=%d %d%% %dmV %+dmA flags=%04x\n",
                         b.usbHostConnected,power::stateText(b.state),b.valid,b.percent,b.millivolts,b.milliamps,b.batteryStatus);
                     power::printDiagnostics();
+                } else if (!strcmp(cmd, "L")) {
+                    comparePowerLoad(true);
                 }
                 n = 0;
             } else if (n < 23) {
@@ -278,7 +314,8 @@ void loop()
     }
 
     input::update(dt);
-    power::poll(now);      // the fuel gauge, at most every couple of seconds
+    power::poll(now);      // the fuel gauge, at most once a second
+    if (power::takeRecoveryRequest(now)) comparePowerLoad(false);
     sound::update();       // keeps the I2S fed: silence when nothing is sounding
     sysclock::update(now); // fetches the time over wifi only if the RTC cannot supply it
     handleBootButton();

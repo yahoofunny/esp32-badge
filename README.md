@@ -7,7 +7,7 @@
 - **20 种像素配饰**：花朵、安全帽、耳机、巫师帽等叠加在原身体上，体型和比例保持一致；衣柜支持预览、取消和保存。
 - **手指拖转主页**：沿应用圆环滑动，松手吸附，点击打开；主页没有左上角时钟。
 - **满屏相册**：默认等比居中裁剪铺满，长按约 **650ms** 切换完整显示，再长按恢复铺满。
-- **USB 连接提示与省电休眠**：SETTINGS → POWER 的电脑连接提示已通过插拔测试；CHARGE ONLY 熄屏休眠，按 BOOT 唤醒。充电状态判断仍有下述未解决问题。
+- **USB 连接提示与省电休眠**：电脑插拔及零电流读数的自动恢复已通过实机验证；CHARGE ONLY 熄屏休眠，按 BOOT 唤醒。充电状态仅显示在设置里。
 - **触摸与绘制分开调度**：输入目标 **20ms**，本机实测约 **30ms**；省电只降低绘制频率，按下即唤醒并高亮，松手执行一次，反馈保留约 **150ms**。
 
 实机验证：主页拖转、桌宠互动、语音联网对话和相册显示已通过，触摸操作顺畅；扫描间隔会随运行负载变化。
@@ -238,10 +238,15 @@ state. It is not displayed as "not charging".
 Serial `B` reports USB status, connection/disconnection counts and read-only gauge
 registers; `S` opens SETTINGS for display checks.
 
-**充电检测尚未完整通过实机验证（2026-10-17）。** 电脑 USB 插拔识别正常；但重插后出现过电量计持续报告
-`0mA`、BatteryStatus `0x5029/0x5028`，用户同时观察到指示灯常亮。增加 BQ27220 手册要求的读取间隔后仍能复现，
-原因尚未确定。此时只确认 USB 已连接，充电状态显示 **CHARGE UNKNOWN**，不能承诺可靠识别任意充电器或充满状态。
-正电流仅表示电量计测到电池有净流入电流，不能代替充电芯片 STAT 状态。
+**重插后零读数的自动恢复已通过实机验证（2026-10-17）。** 此前重插电脑 USB 后，电量计会持续报告
+`0mA`、BatteryStatus `0x5029/0x5028`。不重启的对照证明，短暂降负载后读数可恢复为正电流，恢复正常负载后仍保持充电。
+固件现在仅在电脑连接、读数有效、零电流且 SLEEP 标志持续 2 秒时，尝试一次最多 4 秒的降负载恢复。
+屏幕可能短暂熄灭约 2～4 秒，随后回到原页面，无需按 BOOT；每次实际连接最多尝试一次，避免反复熄屏。
+用户已确认重插后自动恢复并显示 CHARGING，后续串口连续采样约为 **+155mA**。
+完整测试数据见 [充电诊断记录](docs/charging-diagnostics.md)。
+
+异常的完整电气原因仍未确定，任意充电器兼容性与充满状态尚未完整验证。恢复失败仍显示 **CHARGE UNKNOWN**。
+正电流表示电量计测到电池有净流入电流，不代替充电芯片 STAT 状态，也不会用 USB 连接直接判定充电。
 
 **SETTINGS** has VOLUME, SYSTEM, NET, USB and POWER pages behind a small arc menu. VOLUME is the assistant's level,
 kept in the NVS key its own AudioCodec::Start() reads — see system/audio.h for why that

@@ -162,9 +162,12 @@ MX1.25 2PIN 座接 3.7V 锂电，板载充电，BQ27220 电量计（I²C `0x55`�
 [板厂原理图](https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.85B/blob/main/hardware/ESP32-S3-Touch-LCD-1.85B%20Rev1.1.pdf)
 中 ETA6098 的 STAT 只连接 LED1，没有接入 ESP32 GPIO，无法直接读取充电芯片的灯状态。
 
-2026-10-17 实机仍有未解决现象：重新插线后，主机连接为真，但电量计持续报告 `0mA`、
+2026-10-17 实机曾出现以下现象：重新插线后，主机连接为真，但电量计持续报告 `0mA`、
 `0x5029/0x5028`，用户观察到指示灯常亮。补足手册 5.3 要求的 I2C 数据包间隔后仍能复现，
 因此不能把零电流直接判为未充电，也不能把电脑连接直接判为正在充电。界面显示 CHARGE UNKNOWN。
+随后不重启的降负载对照将读数从 0mA 恢复到 +213mA，恢复原负载后约 +156mA。
+固件加入一次性的短暂降负载恢复后，用户已确认重新插线能够自动恢复 CHARGING，串口后续约 +155mA。
+完整电气原因尚未确定，见 [诊断记录](charging-diagnostics.md)。
 
 USB 的 VBUS 会持续使能 DCDC，因此插 USB 会启动主板，插线时 PWR 无法完全断掉主板电源。
 详见 [官方 FAQ](https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85B/FAQ)。

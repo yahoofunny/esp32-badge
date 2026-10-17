@@ -1,4 +1,5 @@
 #include "power.h"
+#include "power_recovery.h"
 
 #include <Arduino.h>
 #include <Wire.h>
@@ -14,6 +15,8 @@ static uint32_t lastPoll = 0;
 static bool everPolled = false;
 static bool sleepRequested = false;
 static uint32_t usbConnects = 0, usbDisconnects = 0;
+static UsbHostLink usbLink;
+static RecoveryCheck recovery;
 
 static bool read16(uint8_t cmd, uint16_t *out)
 {
@@ -42,7 +45,7 @@ void poll(uint32_t nowMs)
 {
     // USB presence is independent of the battery gauge and must update even
     // between gauge polls, or when that I2C device is unavailable.
-    const bool usb = usb_serial_jtag_is_connected();
+    const bool usb = usbLink.update(usb_serial_jtag_is_connected(),nowMs);
     if (usb != last.usbHostConnected) {
         if (usb) ++usbConnects; else ++usbDisconnects;
     }
@@ -65,6 +68,7 @@ Reading cached()
 }
 void requestChargeOnly() { sleepRequested = true; }
 bool chargeOnlyRequested() { return sleepRequested; }
+bool takeRecoveryRequest(uint32_t nowMs) { return recovery.take(last,nowMs); }
 void printDiagnostics() {
     Serial.printf("[power] USB transitions connected=%u disconnected=%u\n",usbConnects,usbDisconnects);
     const uint8_t regs[] = {0x06,0x0a,0x0c,0x14,0x10,0x12,0x3a};
