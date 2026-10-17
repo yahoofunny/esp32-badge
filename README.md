@@ -16,13 +16,18 @@
 - **USB 连接提示与省电休眠**：电脑插拔及零电流读数的自动恢复已通过实机验证；CHARGE ONLY 熄屏休眠，按 BOOT 唤醒。充电状态仅显示在设置里。
 - **触摸与绘制分开调度**：输入目标 **20ms**，本机实测约 **30ms**；省电只降低绘制频率，按下即唤醒并高亮，松手执行一次，反馈保留约 **150ms**。
 
-实机验证：主页拖转、桌宠互动、语音联网对话和相册显示已通过，触摸操作顺畅；扫描间隔会随运行负载变化。
+实机验证：主页拖转、桌宠互动、语音联网对话和相册显示已通过；扫描间隔会随运行负载变化。
+2026-10-17 已确认 GAMES 打开游戏及 BACK 返回、贪吃蛇底部暂停、打砖块左右半屏点击与按住均正常。
 
 | 主页 | CLAWD PET 养成 |
 |---|---|
 | ![圆环应用主页，软件渲染](docs/images/launcher.png) | ![带像素配饰的养成页，软件渲染](docs/images/pet-care.png) |
 | 衣柜 | 小智语音 |
 | ![保持同一身体比例的衣柜，软件渲染](docs/images/pet-wardrobe.png) | ![宠物语音状态，软件渲染](docs/images/pet-voice.png) |
+
+| GAMES 游戏文件夹 | SNAKE 贪吃蛇 | BRICKS 打砖块 |
+|---|---|---|
+| <img src="docs/images/games-folder.png" width="240" alt="GAMES 环绕菜单，四个游戏加 BACK，实际 C++ 软件渲染"> | <img src="docs/images/snake.png" width="240" alt="贪吃蛇示例对局，底部大范围暂停，实际 C++ 软件渲染"> | <img src="docs/images/bricks.png" width="240" alt="打砖块示例对局，左右半屏控制及底部暂停，实际 C++ 软件渲染"> |
 
 *图示由共享 C++ 绘制代码生成，非 LCD 实拍；语音图不包含 LVGL 中文字幕覆盖层。*
 
