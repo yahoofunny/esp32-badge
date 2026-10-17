@@ -9,6 +9,7 @@
 - **满屏相册**：左右滑动或点击左右两侧翻页，底部显示页码；长按约 **650ms** 保持原来的全屏 / 原显示状态切换。
 - **24 个内置 Clawd 动图**：打字、思考、睡觉、扫地、戴耳机和迷你形态等；原样保留动画，离线可看，SD 卡照片继续追加。
 - **HYPNO 惯性摆钟**：随设备左右晃动摆起，停止晃动后逐渐衰减；点击暂停/继续，底部减号、加号切换三档灵敏度。
+- **SNAKE 贪吃蛇 / BRICKS 打砖块**：点击蛇头周围转向，左右键控制挡板；均支持暂停、得分、当次开机最高分和重新开始。
 - **MUSIC 本地播放器**：SD 卡 MP3、WAV 等音频，上一首/下一首、暂停/继续、进度和音量；空音乐目录可自动生成原创演示旋律。
 - **Wi-Fi 传输**：设置中开启独立热点，手机或电脑通过网页批量上传音乐和照片，无需拔卡。
 - **USB 连接提示与省电休眠**：电脑插拔及零电流读数的自动恢复已通过实机验证；CHARGE ONLY 熄屏休眠，按 BOOT 唤醒。充电状态仅显示在设置里。
@@ -188,6 +189,7 @@ python tools/preview_readme.py     # regenerate README images from actual C++ dr
 python tools/preview_power.py      # render the POWER page with a charging fixture
 python tools/preview_hypno.py --animation # actual C++ frame and optional swing GIF
 python tools/preview_music.py      # actual music screen with a deterministic track fixture
+python tools/preview_minigames.py  # real snake/bricks logic tests, screenshots and updated launcher
 python tools/make_clawd_album.py --check # embedded GIFs match the original assets
 ```
 
@@ -219,6 +221,8 @@ system/
 ├── game.h                the Game interface
 ├── game_clawd.{h,cpp}    tilt-controlled rolling clawd
 ├── game_tap.{h,cpp}      touch-controlled clawd tap
+├── game_snake.{h,cpp}    15×15 head-relative tap controls, turn queue and pause
+├── game_bricks.{h,cpp}   left/right paddle buttons, 20 bricks, three lives and pause
 ├── game_pet.{h,cpp}      CLAWD PET: care, egg, evolution, gestures and voice presentation
 ├── outfits.{h,cpp}       twenty accessories over the existing pet body
 ├── game_photos.{h,cpp}   SD-card photos and animations, fill / fit toggle
@@ -235,7 +239,7 @@ system/
 └── partitions.csv        must match the installed layout — see Firmware slots below
 ```
 
-The seven launcher entries are CLAWD ROLL, CLAWD TAP, CLAWD PET, PHOTOS, MUSIC, HYPNO and SETTINGS.
+The nine launcher entries are CLAWD ROLL, CLAWD TAP, CLAWD PET, PHOTOS, MUSIC, HYPNO, SNAKE, BRICKS and SETTINGS.
 Each module draws its own icon; the pet has one entry for both care and voice.
 CLAWD PET keeps its classic orange launcher icon; inside the app, the creature's
 body color continues to follow its current evolution form.
@@ -457,6 +461,32 @@ Touch counterpart: clawd pops up somewhere in the arena, waits a shrinking momen
 and vanishes. Tap it to score, three time-outs and it is over. It exists as much to
 exercise the game interface as to be played — between it and clawd-roll both input
 paths and both ends of the drawing cost are covered.
+
+### SNAKE / BRICKS
+
+两个游戏都从主页圆环打开，完全离线。点击 **PLAY** 开始，底部暂停键暂停或继续，
+结束后点 **RETRY** 重开，长按 BOOT 约 0.9 秒返回主页。最高分保留到本次开机结束。
+
+| SNAKE 贪吃蛇 | BRICKS 打砖块 |
+|---|---|
+| ![SNAKE 实际 C++ 软件渲染，示例对局](docs/images/snake.png) | ![BRICKS 实际 C++ 软件渲染，示例对局](docs/images/bricks.png) |
+
+**SNAKE**：15×15 格子均位于圆屏可视区域。横着走时，点击蛇头上方或下方转为向上或向下；
+竖着走时，点击蛇头左侧或右侧转为向左或向右。以蛇头的位置判断，不是按屏幕中心划分。
+吃橙色食物得分并逐渐加速；
+撞墙或撞到身体结束，填满棋盘获胜。禁止直接反向，快速连续转向会按移动步数依次执行，
+每次点击只登记一次方向，蛇头眼睛立即提示下一个转向。静止画面不重复传输。
+
+**BRICKS**：底部左右键控制挡板，点击立即移动一小步，按住超过约 180ms 连续移动。
+中间按键暂停或继续；掉球后先用左右键调整挡板，再点中间播放键发球。
+反弹角度取决于球击中挡板的位置。共 20 块砖、三条命，每块 10 分，打完全部砖块获胜。
+物理更新拆成不超过 8ms 的子步，避免快速小球穿过砖块，通常按约 30 帧/秒绘制。
+主循环在同一毫秒内再次运行时按零时间推进，跳过屏幕刷新不会让游戏加速。
+
+`python tools/preview_minigames.py` 编译并运行真实游戏逻辑，覆盖转向队列、吃食物、尾部与身体碰撞、
+填满棋盘、反弹、掉命、完整打砖通关、蛇头相对点击、左右键点击及按住、暂停、绘制节奏及帧缓冲边界，
+并生成上面的软件截图和九应用主页图。串口 `GSNAKE` / `GBRICKS` 打开对应游戏，`D` 查看状态。
+`frame_timing` 回归检查覆盖短循环、长停顿及毫秒计数回绕，防止计时误差随空闲循环累积。
 
 ### CLAWD PET
 
@@ -723,9 +753,10 @@ header. Details in [docs/hardware.md](docs/hardware.md).
 
 ## Current status and next work
 
-- [x] Touch-drag launcher ring, snapping, tilt support and seven app entries
+- [x] Touch-drag launcher ring, snapping, tilt support and nine app entries
 - [x] HYPNO sensor-driven inertial pocket watch, three sensitivities, damping and pause/resume
 - [x] CLAWD ROLL and CLAWD TAP mini-games
+- [x] SNAKE and BRICKS mini-games, touch controls, pause, retry and per-boot high scores
 - [x] Unified CLAWD PET care, eggs, seven evolution forms and migrated saves
 - [x] Integrated XiaoZhi voice, expressions, Chinese subtitles and shared pet state
 - [x] Twenty accessories with unchanged body proportions and persistent selection

@@ -38,6 +38,8 @@
 #include "game_music.h"
 #include "game_settings.h"
 #include "game_tap.h"
+#include "game_snake.h"
+#include "game_bricks.h"
 #include "game_xiaozhi.h"
 #include "gfx.h"
 #include "input.h"
@@ -59,8 +61,10 @@ static GameSettings g_settings;
 static GamePhotos   g_photos;
 static GameHypno    g_hypno;
 static GameMusic    g_music;
+static GameSnake    g_snake;
+static GameBricks   g_bricks;
 
-static Game *const GAMES[] = { &g_clawd, &g_tap, &g_pet, &g_photos, &g_music, &g_hypno, &g_settings };
+static Game *const GAMES[] = { &g_clawd, &g_tap, &g_pet, &g_photos, &g_music, &g_hypno, &g_snake, &g_bricks, &g_settings };
 static const int   GAME_COUNT = (int)(sizeof(GAMES) / sizeof(GAMES[0]));
 
 // ----------------------------------------------------------------- screens ---
@@ -255,13 +259,20 @@ static void comparePowerLoad(bool diagnostic)
     Serial.println("[power-probe] restored normal operation, no reset");
 }
 
+static float frameSeconds(uint32_t elapsedMs)
+{
+    // An unchanged millisecond is zero elapsed time, even when render() skips
+    // the LCD transfer. Inventing a 60 Hz frame here makes idle loops speed up
+    // animation and game physics. Only a genuinely long stall is bounded.
+    return elapsedMs>100 ? 1.0f/60.0f : elapsedMs*.001f;
+}
+
 void loop()
 {
     static unsigned long lastMs = millis();
     const unsigned long now = millis();
-    float dt = (now - lastMs) / 1000.0f;
+    const float dt = frameSeconds(uint32_t(now - lastMs));
     lastMs = now;
-    if (dt <= 0.0f || dt > 0.1f) dt = 1.0f / 60.0f;
 
     // A time from the host: "T<epoch>" then a newline on the serial line. This is how
     // the RTC gets set -- once, from the machine that knows what time it is -- rather
@@ -317,6 +328,11 @@ void loop()
                     if(active)active->leave();
                     active=&g_music;active->enter();screen=SCREEN_GAME;
                     Serial.println("[sys] diagnostics: MUSIC opened");
+                } else if (!strcmp(cmd, "GSNAKE") || !strcmp(cmd, "GBRICKS")) {
+                    if(active)active->leave();
+                    active=!strcmp(cmd,"GSNAKE")?static_cast<Game*>(&g_snake):static_cast<Game*>(&g_bricks);
+                    active->enter();screen=SCREEN_GAME;
+                    Serial.printf("[sys] diagnostics: %s opened\n",active->name());
                 } else if (!strcmp(cmd, "V")) {
                     if(active==&g_music)g_music.togglePlayback();
                 } else if (n>1 && cmd[0]=='U') {
@@ -333,6 +349,8 @@ void loop()
                     if(active==&g_settings)g_settings.printDiagnostics();
                     if(active==&g_photos)g_photos.printDiagnostics();
                     if(active==&g_hypno)g_hypno.printDiagnostics();
+                    if(active==&g_snake)g_snake.printDiagnostics();
+                    if(active==&g_bricks)g_bricks.printDiagnostics();
                 } else if (!strcmp(cmd,"F")) {
                     if(active==&g_photos)g_photos.captureFrame();
                 } else if (!strcmp(cmd, "B")) {

@@ -23,6 +23,8 @@ TESTS={
     'photo_gif_native':['tests/photo_gif_test.cpp','-DCLAWD_NATIVE_RGB565=1'],
     'photo_gesture':['tests/photo_gesture_test.cpp'],
     'launcher_drag':['tests/launcher_drag_test.cpp','system/gfx.cpp'],
+    'minigames':['tests/minigames_test.cpp','system/game_snake.cpp','system/game_bricks.cpp','system/gfx.cpp'],
+    'frame_timing':['tests/frame_timing_test.cpp'],
     'pet_state':['tests/pet_state_test.cpp','system/game_pet.cpp','system/gfx.cpp','system/outfits.cpp'],
     'outfits':['tests/outfits_test.cpp','system/outfits.cpp','system/gfx.cpp'],
     'outfits_native':['tests/outfits_test.cpp','system/outfits.cpp','system/gfx.cpp','-DCLAWD_NATIVE_RGB565=1'],
@@ -36,7 +38,7 @@ def run_checks(names=None):
     env['PATH']=str(Path(compiler).parent)+os.pathsep+env.get('PATH','')
     (ROOT/'build').mkdir(exist_ok=True)
     for name in names or TESTS:
-        if name in ('music_output','music_task','transfer_http','flac_clock'):
+        if name in ('music_output','music_task','transfer_http','flac_clock','frame_timing'):
             def function(source,signature):
                 start=source.index(signature);opening=source.index('{',start)
                 depth=0
@@ -58,6 +60,8 @@ def run_checks(names=None):
                      'void GameMusic::leave('))
             elif name=='flac_clock':
                 generated=function(decoder,'void Audio::compute_audioCurrentTime(')
+            elif name=='frame_timing':
+                generated=function((ROOT/'system/system.ino').read_text(encoding='utf-8'),'static float frameSeconds(')
             else:
                 transfer=(ROOT/'lib/badge_transfer/src/BadgeTransfer.cpp').read_text(encoding='utf-8')
                 generated='\n'.join(function(transfer,signature) for signature in

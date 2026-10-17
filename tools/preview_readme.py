@@ -68,8 +68,10 @@ def render_launcher():
         if 'formOf(' in draw:
             chunks.append('using namespace mon;')
             chunks.append(function_source(source, 'static const mon_form_t &formOf('))
-        chunks.extend([draw, f'void {cls}::enter() {{}}', f'void {cls}::leave() {{}}',
+        chunks.extend([draw, f'void {cls}::enter() {{}}',
                        f'void {cls}::update(float) {{}}', f'void {cls}::render() {{}}'])
+        if re.search(r'\bvoid\s+leave\s*\(', header.read_text(encoding='utf-8')):
+            chunks.append(f'void {cls}::leave() {{}}')
         path = generated / (stem + '.cpp')
         path.write_text('\n'.join(chunks) + '\n', encoding='utf-8')
         sources.append(str(path))

@@ -10,10 +10,10 @@ class Dummy:public Game{
     const char* name()const override{return "APP";}
     uint16_t accent()const override{return 0xffff;}
     void update(float)override{} void render()override{}
-} apps[6];
-Game* entries[]={&apps[0],&apps[1],&apps[2],&apps[3],&apps[4],&apps[5]};
+} apps[9];
+Game* entries[]={&apps[0],&apps[1],&apps[2],&apps[3],&apps[4],&apps[5],&apps[6],&apps[7],&apps[8]};
 void point(float angle){px=int(lroundf(180+112*cosf(angle)));py=int(lroundf(180+66*sinf(angle)));}
-void reset(){finger=released=false;lean=0;launcher::begin(entries,6);}
+void reset(){finger=released=false;lean=0;launcher::begin(entries,9);}
 void hold(float angle){finger=true;released=false;point(angle);assert(!launcher::update(.016f));}
 void lift(){finger=false;released=true;assert(!launcher::update(.016f));released=false;}
 }
@@ -24,7 +24,7 @@ int tapX(){return px;}int tapY(){return py;}float tiltX(){return lean;}
 namespace sound {void play2(int,int,int,int){}void launch(){}}
 int main(){
     reset();hold(-PI_F/2);
-    for(int i=1;i<=12;++i)hold(-PI_F/2+i*(PI_F/3)/12);
+    for(int i=1;i<=12;++i)hold(-PI_F/2+i*(2*PI_F/9)/12);
     assert(launcher::touchDragging && fabsf(launcher::selPos+1)<.03f);
     lift();assert(launcher::sel==-1 && launcher::launching<0);
     for(int i=0;i<60;++i)assert(!launcher::update(.016f));
@@ -35,7 +35,7 @@ int main(){
     assert(picked==&apps[0]);
     // Wrap through +/-pi follows the short arc, not an almost-full revolution.
     reset();hold(170*PI_F/180);hold(179*PI_F/180);hold(-170*PI_F/180);
-    assert(launcher::selPos<0 && launcher::selPos>-.5f);lift();
+    assert(launcher::selPos<0 && launcher::selPos>-.75f);lift();
     // Press/release jitter must remain a tap.
     reset();hold(-PI_F/2);px+=2;launcher::update(.016f);assert(!launcher::touchDragging);
     // Crossing the middle must not introduce a sudden half-turn.
@@ -48,5 +48,5 @@ int main(){
     for(int i=0;i<10;++i)assert(!launcher::update(.016f));
     assert(launcher::sel==selected);
     launcher::begin(nullptr,0);assert(!launcher::update(.016f));
-    puts("PASS: ring drag, snap, tap, angle wrap, centre crossing, tilt suppression, empty registry");
+    puts("PASS: nine-entry ring drag, snap, tap, angle wrap, centre crossing, tilt suppression, empty registry");
 }
