@@ -6,7 +6,25 @@
 #include <ctype.h>
 
 namespace badge_transfer {
-constexpr uint32_t MAX_BYTES=50u*1024*1024;
+constexpr uint32_t MAX_MUSIC_BYTES=512u*1024*1024;
+constexpr uint32_t MAX_PHOTO_BYTES=50u*1024*1024;
+inline uint32_t maxBytesFor(const char *kind){return !strcmp(kind,"music")?MAX_MUSIC_BYTES:MAX_PHOTO_BYTES;}
+struct FlacInfo {
+    bool valid=false,supported=false;
+    uint32_t rate=0;
+    uint8_t bits=0,channels=0;
+};
+// Native FLAC STREAMINFO; inspect metadata without decoding or altering audio.
+inline FlacInfo inspectFlac(const uint8_t *h,size_t n) {
+    FlacInfo f;
+    if(n<26||memcmp(h,"fLaC",4)||(h[4]&0x7f)!=0||h[5]||h[6]||h[7]!=34)return f;
+    f.rate=(uint32_t(h[18])<<12)|(uint32_t(h[19])<<4)|(h[20]>>4);
+    f.channels=((h[20]>>1)&7)+1;f.bits=((h[20]&1)<<4)+(h[21]>>4)+1;
+    const uint16_t block=(uint16_t(h[10])<<8)|h[11];
+    f.valid=f.rate>0&&block>0;
+    f.supported=f.valid&&(f.bits==8||f.bits==16)&&f.channels<=2&&block<=8192;
+    return f;
+}
 struct Status {
     bool running=false,busy=false;
     uint32_t bytes=0,total=0,completed=0;

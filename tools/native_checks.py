@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build and execute firmware regression checks on the host, without a serial port."""
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -37,12 +38,15 @@ def run_checks(names=None):
         if name in ('music_output','music_task','transfer_http'):
             def function(source,signature):
                 start=source.index(signature);opening=source.index('{',start)
-                depth=1;end=opening+1
-                while depth:
-                    if source[end]=='{':depth+=1
-                    elif source[end]=='}':depth-=1
-                    end+=1
-                return source[start:end]
+                depth=0
+                # JSON strings and comments can contain unmatched braces.
+                tokens=r'''//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[{}]'''
+                for token in re.finditer(tokens,source[opening:]):
+                    if token.group()=='{':depth+=1
+                    elif token.group()=='}':
+                        depth-=1
+                        if depth==0:return source[start:opening+token.end()]
+                raise ValueError('Unclosed C++ function: '+signature)
             app=(ROOT/'system/game_music.cpp').read_text(encoding='utf-8')
             decoder=(ROOT/'lib/badge_audio_i2s/src/BadgeAudio.cpp').read_text(encoding='utf-8')
             if name=='music_output':

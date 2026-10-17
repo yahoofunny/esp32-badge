@@ -20,6 +20,15 @@ int main(){
     assert(!folderFor("music","a.jpg")&&!folderFor("photos","a.mp3"));
     assert(!folderFor("other","a.mp3")&&!folderFor("photos","a.png"));
     assert(!folderFor("music","a.mp3.exe")&&!folderFor("music","a")&&!folderFor("music","a."));
-    assert(MAX_BYTES==50u*1024*1024);
-    std::puts("PASS: transfer types, UTF-8/space names, encoded traversal/control/FAT rejection, double encoding and byte-length limits");
+    assert(maxBytesFor("music")==512u*1024*1024&&maxBytesFor("photos")==50u*1024*1024);
+    uint8_t flac[42]={};memcpy(flac,"fLaC",4);flac[4]=0x80;flac[7]=34;flac[10]=0x10;
+    flac[18]=0x0a;flac[19]=0xc4;flac[20]=0x42;flac[21]=0xf0;
+    auto info=inspectFlac(flac,sizeof flac);
+    assert(info.valid&&info.supported&&info.rate==44100&&info.channels==2&&info.bits==16);
+    flac[20]|=1;flac[21]=0x70;info=inspectFlac(flac,sizeof flac);
+    assert(info.valid&&!info.supported&&info.bits==24);
+    flac[20]=0x46;flac[21]=0xf0;assert(!inspectFlac(flac,sizeof flac).supported); // four channels
+    flac[20]=0x42;flac[10]=0x40;assert(!inspectFlac(flac,sizeof flac).supported); // oversized block
+    assert(!inspectFlac(flac,25).valid);flac[7]=33;assert(!inspectFlac(flac,sizeof flac).valid);
+    std::puts("PASS: music/photo size limits, FLAC STREAMINFO compatibility, UTF-8 names, encoded traversal/control/FAT rejection and byte-length limits");
 }
