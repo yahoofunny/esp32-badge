@@ -323,6 +323,7 @@ void loop()
                         LCD_completedTransfers());
                     if(active==&g_music)g_music.printDiagnostics();
                     if(active==&g_photos)g_photos.printDiagnostics();
+                    if(active==&g_hypno)g_hypno.printDiagnostics();
                 } else if (!strcmp(cmd,"F")) {
                     if(active==&g_photos)g_photos.captureFrame();
                 } else if (!strcmp(cmd, "B")) {

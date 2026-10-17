@@ -8,7 +8,7 @@
 - **手指拖转主页**：沿应用圆环滑动，松手吸附，点击打开；主页没有左上角时钟。
 - **满屏相册**：左右滑动或点击左右两侧翻页，底部显示页码；长按约 **650ms** 保持原来的全屏 / 原显示状态切换。
 - **24 个内置 Clawd 动图**：打字、思考、睡觉、扫地、戴耳机和迷你形态等；原样保留动画，离线可看，SD 卡照片继续追加。
-- **HYPNO 摆钟**：金色怀表左右摆动，背景同心圆缓慢收拢；点击暂停/继续，底部减号、加号切换三档速度。
+- **HYPNO 惯性摆钟**：随设备左右晃动摆起，停止晃动后逐渐衰减；点击暂停/继续，底部减号、加号切换三档灵敏度。
 - **MUSIC 本地播放器**：SD 卡 MP3、WAV 等音频，上一首/下一首、暂停/继续、进度和音量；空音乐目录可自动生成原创演示旋律。
 - **USB 连接提示与省电休眠**：电脑插拔及零电流读数的自动恢复已通过实机验证；CHARGE ONLY 熄屏休眠，按 BOOT 唤醒。充电状态仅显示在设置里。
 - **触摸与绘制分开调度**：输入目标 **20ms**，本机实测约 **30ms**；省电只降低绘制频率，按下即唤醒并高亮，松手执行一次，反馈保留约 **150ms**。
@@ -192,7 +192,7 @@ python tools/make_clawd_album.py --check # embedded GIFs match the original asse
 
 Checks cover photo scaling and crop boundaries, ring dragging and snapping,
 save migration, care, wardrobe persistence, accessory clipping in both RGB565 byte
-orders, button press/release feedback, BQ27220 charging state, HYPNO touch/speed/pause
+orders, button press/release feedback, BQ27220 charging state, HYPNO sensor motion/sensitivity/pause
 and UI pacing across timer wrap. Host renders
 complement device checks; they do not measure LCD transfer or touch-controller latency.
 
@@ -222,7 +222,7 @@ system/
 ├── outfits.{h,cpp}       twenty accessories over the existing pet body
 ├── game_photos.{h,cpp}   SD-card photos and animations, fill / fit toggle
 ├── clawd_album.{h,cpp}   24 built-in original Clawd GIFs, read directly from flash
-├── game_hypno.{h,cpp}    swinging pocket watch, pause and three speed settings
+├── game_hypno.{h,cpp}    sensor-driven pocket watch, pause and motion sensitivity
 ├── game_music.{h,cpp}    SD audio player, controls and audio-driver ownership
 ├── game_settings.{h,cpp} volume, and what is under the hood
 ├── power.{h,cpp}         the BQ27220 fuel gauge
@@ -329,12 +329,20 @@ the I2S driver without a reboot; the local decoder fork uses the ES8311's 256fs
 MCLK and disables its IDF 5 channel before deleting it. Serial `M` opens the player,
 `V` pauses/resumes, `N` / `J` change tracks and `D` reports playback time and PCM counters.
 
-**HYPNO.** A gold pocket watch swings on a linked chain over slowly contracting
-concentric rings. Tap the scene or the middle pause/play button to stop or resume;
-use `−` / `+` for SLOW, NORMAL or FAST (3.8 / 2.8 / 1.9 seconds per full swing).
-Dragging cancels a tap. Animation targets 30fps, with immediate button feedback;
-paused frames produce no redundant LCD transfers. Hold BOOT for about 900ms to return
-to the launcher. Each entry starts at NORMAL speed and does not alter saved pet or battery data.
+**HYPNO.** Shake the badge left/right to drive the gold pocket watch. It uses the
+QMI8658 acceleration sample already read by the input loop, with an inertial pendulum
+and damping, with a relaxed free-swing period of about 3.4 seconds. A slowly tracked
+gravity baseline permits different holding positions;
+there is no automatic periodic swing while the badge is still. The rings move with
+the pendulum's motion and stop as it settles.
+Tap the scene or middle pause/play button to freeze/resume; `−` / `+` select SOFT,
+NORMAL or STRONG motion sensitivity. Motion during pause is sampled without building
+up an impulse for resume. Dragging cancels a tap. Redraws are capped at 30fps;
+paused/resting frames do not repeatedly transfer the display. Hold BOOT about 900ms
+to return home. Each entry starts stationary at NORMAL sensitivity; saved pet and
+battery data are untouched. Serial `Y` opens HYPNO; `D` reports real raw acceleration,
+motion drive, angle and velocity. The software preview feeds simulated acceleration
+through the same motion/rendering code and is not a recording of a physical shake.
 
 ```bash
 ./tools/deploy_game.sh system          # update the launcher app in factory; keep ota_0
@@ -658,7 +666,7 @@ header. Details in [docs/hardware.md](docs/hardware.md).
 ## Current status and next work
 
 - [x] Touch-drag launcher ring, snapping, tilt support and seven app entries
-- [x] HYPNO swinging pocket watch, three speeds, pause/resume and circular-screen preview
+- [x] HYPNO sensor-driven inertial pocket watch, three sensitivities, damping and pause/resume
 - [x] CLAWD ROLL and CLAWD TAP mini-games
 - [x] Unified CLAWD PET care, eggs, seven evolution forms and migrated saves
 - [x] Integrated XiaoZhi voice, expressions, Chinese subtitles and shared pet state

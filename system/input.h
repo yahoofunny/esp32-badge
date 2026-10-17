@@ -26,6 +26,9 @@ float tiltY();
 // these, because the magnitude of this vector is 1 at rest and spikes when shaken.
 void readRawAccel(float out[3]);
 
+// Latest valid sample already read by update(); no extra I2C transaction.
+bool latestRawAccel(float out[3]);
+
 // --- touch ------------------------------------------------------------------
 bool touchDown();
 bool tapped();                  // true for exactly one frame, on release

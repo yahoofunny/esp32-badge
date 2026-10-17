@@ -33,6 +33,8 @@ static const float DEADZONE   = 0.025f;  // g; applied after trimming
 
 static SensorQMI8658 imu;
 static bool  imuOk = false;
+static float latestAccel[3]={};
+static bool latestAccelValid=false;
 
 
 static float tiltXv = 0.0f, tiltYv = 0.0f;
@@ -44,10 +46,14 @@ static int      tapXv = 0, tapYv = 0;
 static uint32_t downSince = 0;
 static uint32_t bootSince = 0;
 
-static void readAccel(float *out)
+static bool readAccel(float *out)
 {
-    if (!imuOk) { out[0] = out[1] = out[2] = 0.0f; return; }
-    imu.getAccelerometer(out[0], out[1], out[2]);
+    if (!imuOk || !imu.getAccelerometer(out[0], out[1], out[2])) {
+        out[0] = out[1] = out[2] = 0.0f;
+        return false;
+    }
+    return isfinite(out[0])&&isfinite(out[1])&&isfinite(out[2])&&
+           out[0]*out[0]+out[1]*out[1]+out[2]*out[2]>.01f;
 }
 
 static void reportOrientation()
@@ -104,7 +110,8 @@ void update(float dt)
     (void)dt;
 
     float a[3];
-    readAccel(a);
+    latestAccelValid=readAccel(a);
+    for(int i=0;i<3;++i)latestAccel[i]=a[i];
 
     const float rx = a[AXIS_X] * SIGN_X;
     const float ry = a[AXIS_Y] * SIGN_Y;
@@ -156,6 +163,10 @@ float tiltY() { return tiltYv; }
 void readRawAccel(float out[3])
 {
     readAccel(out);
+}
+bool latestRawAccel(float out[3]) {
+    for(int i=0;i<3;++i)out[i]=latestAccel[i];
+    return latestAccelValid;
 }
 
 bool touchDown() { return down; }

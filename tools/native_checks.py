@@ -11,6 +11,7 @@ TESTS={
     'power_recovery':['tests/power_recovery_test.cpp'],
     'gauge_capacity':['tests/gauge_capacity_test.cpp'],
     'hypno':['tests/hypno_test.cpp','system/game_hypno.cpp','system/gfx.cpp'],
+    'hypno_motion':['tests/hypno_motion_test.cpp'],
     'photo_blit':['tests/photo_blit_test.cpp'],
     'photo_gif':['tests/photo_gif_test.cpp'],
     'photo_gif_native':['tests/photo_gif_test.cpp','-DCLAWD_NATIVE_RGB565=1'],

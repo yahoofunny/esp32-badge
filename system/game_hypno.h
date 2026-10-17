@@ -1,5 +1,6 @@
 #pragma once
 #include "game.h"
+#include "hypno_motion.h"
 
 class GameHypno : public Game {
 public:
@@ -10,10 +11,12 @@ public:
     void leave() override;
     void update(float dt) override;
     void render() override;
+    void printDiagnostics() const;
 private:
     friend struct HypnoTestAccess;
-    float phase=0,halo=0;
-    int speed=1,pressed=-1,startTarget=-1,startX=0,startY=0;
+    hypno::Motion motion;
+    float halo=0,paintedAngle=0,paintedHalo=0;
+    int sensitivity=1,pressed=-1,startTarget=-1,startX=0,startY=0;
     bool paused=false,tracking=false,moved=false,redraw=true,painted=false;
     uint32_t lastFrame=0;
 };
