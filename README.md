@@ -1,5 +1,7 @@
 # esp32-badge · CLAWD PET
 
+**简体中文** | [English](README.en.md)
+
 一只运行在圆屏 ESP32 上的电子吧唧桌宠：**养成、换装和小智语音聊天，放进同一个 CLAWD PET**。
 硬件是 Waveshare **ESP32-S3-Touch-LCD-1.85B**，1.85 英寸 360×360 触摸屏，带六轴传感器、麦克风和扬声器接口。
 
@@ -35,236 +37,232 @@
 <img src="docs/images/music.png" width="240" alt="MUSIC 黑胶唱片界面，实际 C++ 软件渲染，曲目和时间为演示数据">
 <img src="docs/images/photos.png" width="240" alt="PHOTOS 相册，设备实际 framebuffer 读回：透明背景与页码">
 
-Quick links: **[Build and update](#build-and-update)** · **[Voice integration and controls](docs/clawd-pet-voice.md)** · **[Hardware](docs/hardware.md)** · **[Verification](#verification)** · **[Firmware slots](#firmware-slots)**
+快速入口：**[编译与更新](#编译与更新)** · **[语音集成与操作](docs/clawd-pet-voice.md)** · **[硬件说明](docs/hardware.md)** · **[验证与预览](#验证与预览)** · **[固件分区](#固件分区)**
 
-This repo holds the launcher, games, shared pet model, ESP-IDF voice integration,
-tools and hardware notes. Upstream SDKs, local flash backups and build output are
-not vendored; see [Setup](#setup).
+本仓库包含启动器、小游戏、共享宠物模型、ESP-IDF 语音集成、工具和硬件说明。
+上游 SDK、本地闪存备份及编译产物不纳入仓库；获取方式见[环境准备](#环境准备)。
 
-## Hardware
+<a id="hardware"></a>
 
-| | |
+## 硬件
+
+| 项目 | 规格 |
 |---|---|
-| MCU | ESP32-S3R8, dual-core LX7 @ 240MHz |
-| Memory | 512KB SRAM + **8MB OPI PSRAM** |
-| Flash | **16MB** NOR |
-| Display | 1.85" round IPS, 360×360, **ST77916**, QSPI, RGB565 |
-| Touch | **CST816S**, I²C `0x15` |
-| IMU | **QMI8658** 6-axis, I²C `0x6B`, ±2–16g / ±32–4096dps |
-| Audio | ES8311 codec `0x30` + ES7210 echo-cancel `0x80`, dual mics, speaker pads |
-| Other | PCF85063 RTC `0x51`, BQ27220 fuel gauge `0x55`, microSD (4-bit SDMMC) |
-| Radio | WiFi 2.4GHz b/g/n + BLE 5 |
-| Power | USB-C or MX1.25 3.7V LiPo (onboard charging) |
+| 主控 | ESP32-S3R8，双核 LX7，240MHz |
+| 内存 | 512KB SRAM + **8MB OPI PSRAM** |
+| 闪存 | **16MB** NOR |
+| 屏幕 | 1.85 英寸圆形 IPS，360×360，**ST77916**，QSPI，RGB565 |
+| 触摸 | **CST816S**，I²C `0x15` |
+| 惯性传感器 | **QMI8658** 六轴，I²C `0x6B`，±2–16g / ±32–4096dps |
+| 音频 | ES8311 编解码器 `0x30` + ES7210 回声消除 `0x80`，双麦克风、扬声器焊盘 |
+| 其他 | PCF85063 实时时钟 `0x51`，BQ27220 电量计 `0x55`，microSD（4 位 SDMMC） |
+| 无线 | 2.4GHz Wi-Fi b/g/n + BLE 5 |
+| 供电 | USB-C 或 MX1.25 接口的 3.7V 锂聚合物电池，板载充电 |
 
-Pin map, free-GPIO analysis and expansion notes: **[docs/hardware.md](docs/hardware.md)**
+引脚表、空闲 GPIO 分析与扩展说明见 **[硬件文档](docs/hardware.md)**。
 
-The USB-C port is wired straight to the chip's native USB-Serial/JTAG
-(`VID:PID = 303A:1001`) — there is no USB-to-UART bridge chip on the board.
+USB-C 直接连接芯片原生 USB-Serial/JTAG（`VID:PID = 303A:1001`），板上没有 USB 转 UART 桥接芯片。
 
-## Repo layout
+<a id="repo-layout"></a>
+
+## 仓库结构
 
 ```
 esp32-badge/
-├── system/                    the firmware that runs on the badge (launcher + games)
-├── firmware/clawd_pet/         ESP-IDF voice display, input adapter and UI pacing
-├── assets/clawd-gifs/          24 original animations for PHOTOS and wardrobe references
-├── games/clawd-roll/          the same game as a standalone sketch, no launcher
+├── system/                    吧唧启动器与小游戏固件
+├── firmware/clawd_pet/        ESP-IDF 语音显示、输入适配及界面调度
+├── assets/clawd-gifs/         相册与配饰参考使用的 24 个原始动画
+├── games/clawd-roll/          不含启动器的独立游戏工程
 ├── lib/
-│   ├── board_drivers/         shared Arduino library: ST77916 panel, CST816 touch, I2C
-│   └── badge_audio_i2s/        isolated local audio decoder, 256fs MCLK and I2S cleanup fixes
+│   ├── board_drivers/         ST77916、CST816 触摸及 I²C 的共享 Arduino 驱动
+│   └── badge_audio_i2s/       本地音频解码器、256fs MCLK 及 I²S 释放修正
 ├── docs/
-│   └── hardware.md            pin map, free GPIOs, expansion notes
+│   └── hardware.md            引脚、空闲 GPIO 与扩展说明
 ├── tools/
-│   ├── build.sh               compile / flash helper (arduino-cli)
-│   ├── deploy_game.sh         build a sketch, write only the factory app, boot it
-│   ├── prepare_clawd_voice.py prepare the pinned XiaoZhi source + shared pet overlay
-│   ├── install_voice_pet.py   verify / back up / install the integrated ota_0 pet
-│   ├── switch_slot.py         choose which slot the bootloader starts
-│   ├── restore_stock.sh       restore the factory firmware
-│   ├── serial_monitor.py      native CDC monitor (DTR enabled, RTS inactive)
-│   ├── convert_sprite.py      flat-colour art -> 2bpp indexed C header
-│   ├── make_font.py           bake an 8x8 ASCII bitmap font
-│   ├── make_icon.py           render the project icon
-│   ├── idf_install_steps.bat  install ESP-IDF toolchain (Git Bash friendly)
-│   └── idf_env.bat            activate ESP-IDF env and run a command
-└── README.md
+│   ├── build.sh               arduino-cli 编译与烧录辅助工具
+│   ├── deploy_game.sh         编译、仅写入 factory 应用并启动
+│   ├── prepare_clawd_voice.py 准备固定版本小智源码及共享宠物集成
+│   ├── install_voice_pet.py   验证、备份及安装 ota_0 语音宠物
+│   ├── switch_slot.py         选择启动分区
+│   ├── restore_stock.sh       恢复原厂固件
+│   ├── serial_monitor.py      原生 CDC 串口监视，启用 DTR、保持 RTS 无效
+│   ├── convert_sprite.py     将纯色图转换为 2bpp 索引 C 头文件
+│   ├── make_font.py           生成 8×8 ASCII 位图字体
+│   ├── make_icon.py           生成项目图标
+│   ├── idf_install_steps.bat  安装 ESP-IDF 工具链，兼容 Git Bash
+│   └── idf_env.bat            激活 ESP-IDF 环境并执行命令
+├── README.md                  中文说明
+└── README.en.md               英文说明
 ```
 
-`arduino-cli`, the upstream Waveshare repo, ESP-IDF, build output and flash backups
-are all gitignored — follow the setup below to recreate them locally.
+`arduino-cli`、上游 Waveshare 仓库、ESP-IDF、编译产物和闪存备份均已加入 Git 忽略规则，可按下文在本地重新准备。
 
-## Setup
+<a id="setup"></a>
 
-### 1. Upstream sources (not in git)
+## 环境准备
+
+<a id="1-upstream-sources-not-in-git"></a>
+
+### 1. 获取上游源码
 
 ```bash
 git clone --depth 1 https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.85B.git
 ```
 
-Contains the official Arduino + ESP-IDF examples, the published factory firmware,
-and the schematic. The ESP-IDF examples include `05_esp-brookesia` (an ESP-Brookesia
-framework demo) and `06_qmi8658_test` (IMU check).
+上游仓库包含官方 Arduino 与 ESP-IDF 示例、发布的原厂固件和原理图。
+ESP-IDF 示例包括 `05_esp-brookesia`（ESP-Brookesia 框架演示）和 `06_qmi8658_test`（惯性传感器测试）。
 
-> **`05_esp-brookesia` is not the full shipping system.** It builds the same
-> ESP-Brookesia *Phone* framework with the same dark stylesheet, but it only installs
-> the `SquarelineDemo` app (`main/main.cpp`). The apps the shipped binary actually has
-> — XiaoZhi, Video Player, Chipmunk2d, and the rest — are **not** in this source tree,
-> so rebuilding it gives you a reduced system, not a byte-equivalent one. The
-> prebuilt binary in `Firmware/` is the only faithful copy of the stock system, which
-> is why backing it up matters.
+> **`05_esp-brookesia` 不是完整的出厂系统源码。** 它使用相同的 ESP-Brookesia Phone 框架和深色样式，
+> 但只安装 `SquarelineDemo` 应用（`main/main.cpp`）。出厂二进制中的小智、视频播放器、Chipmunk2d 等应用
+> 不在该源码树中，因此重新编译只会得到精简演示系统，不能得到逐字节一致的原厂系统。
+> `Firmware/` 中的预编译二进制才是原厂系统的完整副本，因此需要保留备份。
 
-### 2. Arduino path
+<a id="2-arduino-path"></a>
+
+### 2. Arduino 环境
 
 ```bash
-# arduino-cli: https://github.com/arduino/arduino-cli/releases  -> drop into tools/
+# 从 https://github.com/arduino/arduino-cli/releases 下载 arduino-cli，放入 tools/
 arduino-cli config init
 arduino-cli core update-index
 arduino-cli core install esp32:esp32@3.2.0
 
-# Waveshare's bundled libraries (lvgl 8.4, SensorLib, ES8311/ES7210, ...)
+# Waveshare 附带的库（LVGL 8.4、SensorLib、ES8311/ES7210 等）
 cp -r ESP32-S3-Touch-LCD-1.85B/Examples/Arduino-V3.2.0/libraries/* \
       "$(arduino-cli config get directories.user)/libraries/"
 ```
 
-If you are behind a proxy: `arduino-cli config set network.proxy http://127.0.0.1:7897`
+需要代理时：`arduino-cli config set network.proxy http://127.0.0.1:7897`。
 
-### 3. ESP-IDF path (for the integrated voice pet)
+<a id="3-esp-idf-path-for-the-integrated-voice-pet"></a>
+
+### 3. ESP-IDF 环境（集成语音宠物）
 
 ```bash
 git clone -b v5.5.3 --depth 1 --shallow-submodules --recursive \
     https://github.com/espressif/esp-idf.git
-cmd.exe //c "tools\idf_install_steps.bat"        # installs the esp32s3 toolchain
-cmd.exe //c "tools\idf_env.bat idf.py --version" # sanity check
+cmd.exe //c "tools\idf_install_steps.bat"        # 安装 esp32s3 工具链
+cmd.exe //c "tools\idf_env.bat idf.py --version" # 检查工具链是否可用
 ```
 
-## Build and update
+<a id="build-and-update"></a>
 
-Make a [full flash backup](#back-up-before-you-flash) before the first installation.
-The supported layout keeps our Arduino launcher in `factory` and the integrated
-ESP-IDF voice pet in `ota_0`; both use the existing partition table.
+## 编译与更新
 
-Build or update the launcher from Git Bash:
+首次安装前先[备份完整闪存](#烧录前备份)。本项目将 Arduino 启动器放在 `factory`，
+将集成语音宠物放在 `ota_0`，两者沿用设备已有的分区表。
+
+在 Git Bash 中编译或更新启动器：
 
 ```bash
-PARTITION_SCHEME=custom ./tools/build.sh compile system  # build only
-./tools/deploy_game.sh system COM3                     # build, write factory app, boot
+PARTITION_SCHEME=custom ./tools/build.sh compile system  # 仅编译
+./tools/deploy_game.sh system COM3                     # 编译、写入 factory 应用并启动
 ```
 
-Use the app-only deploy helper for this layout. The generic `build.sh upload/both`
-path is an Arduino upload and can also write the bootloader and partition table;
-it is not the update path for this two-firmware installation.
+此布局应使用仅更新应用的部署工具。通用的 `build.sh upload/both` 采用 Arduino 上传流程，
+可能同时写入引导程序和分区表，不适合作为这套双固件布局的更新方式。
 
-Build the voice pet from PowerShell at the repository root:
+在仓库根目录使用 PowerShell 编译语音宠物：
 
 ```powershell
 python tools/prepare_clawd_voice.py
 $voiceBuild = Join-Path (Get-Location) "build/clawd-voice"
-cmd /c tools\idf_env.bat idf.py -C reference/xiaozhi -B "$voiceBuild" set-target esp32s3 # first build
+cmd /c tools\idf_env.bat idf.py -C reference/xiaozhi -B "$voiceBuild" set-target esp32s3 # 首次编译时执行
 cmd /c tools\idf_env.bat idf.py -C reference/xiaozhi -B "$voiceBuild" build
-python tools/install_voice_pet.py          # verify artifacts; dry run
-python tools/install_voice_pet.py --flash  # back up current slot/config, write ota_0 only
+python tools/install_voice_pet.py          # 验证产物，预演但不写入
+python tools/install_voice_pet.py --flash  # 备份当前分区和配置，仅写 ota_0
 ```
 
-This uses XiaoZhi **v2.3.0** with ESP-IDF **5.5.3** and pinned dependencies.
-The installer requires the local full backup to verify the partition table, and
-checks the connected device before writing. Open CLAWD PET from the launcher after
-installation. Do not use plain `idf.py flash`: the generated flash arguments target
-`factory` and include bootloader/table writes. Detailed build notes are in
-[docs/clawd-pet-voice.md](docs/clawd-pet-voice.md).
+语音集成使用小智 **v2.3.0**、ESP-IDF **5.5.3** 及固定版本依赖。
+安装工具需要本地完整备份来验证分区表，并在写入前检查连接的设备。安装后从启动器打开 CLAWD PET。
+不要直接运行 `idf.py flash`：自动生成的烧录参数指向 `factory`，并包含引导程序和分区表写入。
+详细步骤见[语音宠物编译与操作](docs/clawd-pet-voice.md)。
 
-Board options are baked into `build.sh`. The non-default ones matter:
+`build.sh` 已设置板卡选项，下列非默认值关系到设备能否正常运行：
 
-| Option | Value | Why |
+| 选项 | 值 | 原因 |
 |---|---|---|
-| `CDCOnBoot` | `cdc` | USB-C goes to the chip's native USB-Serial/JTAG; without this `Serial` never appears over USB |
-| `FlashSize` | `16M` | onboard flash |
-| `PSRAM` | `opi` | onboard octal PSRAM |
+| `CDCOnBoot` | `cdc` | USB-C 接原生 USB-Serial/JTAG；未启用时 USB 上不会出现 `Serial` |
+| `FlashSize` | `16M` | 板载闪存容量 |
+| `PSRAM` | `opi` | 板载八线 PSRAM |
 | `FlashMode` | `qio` | QIO 80MHz |
-| `PartitionScheme` | `custom` | `system/partitions.csv`, matching the installed factory / ota_0 / assets layout |
+| `PartitionScheme` | `custom` | 使用 `system/partitions.csv`，匹配已有的 factory / ota_0 / assets 布局 |
 
-`build.sh` defaults to a generic Arduino partition scheme, so the explicit
-`PARTITION_SCHEME=custom` above matters; `deploy_game.sh` sets it automatically.
+`build.sh` 默认使用通用 Arduino 分区方案，因此上面的 `PARTITION_SCHEME=custom` 不能省略；
+`deploy_game.sh` 会自动设置该选项。
 
-## Verification
+<a id="verification"></a>
+
+## 验证与预览
 
 ```bash
-python tools/native_checks.py      # execute real shared C++ logic on the host; requires g++
-python tools/preview_pet.py        # render the shared pet code; also needs Pillow
-python tools/preview_launcher.py   # Python preview of the launcher layout
-python tools/preview_readme.py     # regenerate README images from actual C++ drawing; needs Pillow
-python tools/preview_power.py      # render the POWER page with a charging fixture
-python tools/preview_hypno.py --animation # actual C++ frame and optional swing GIF
-python tools/preview_music.py      # actual music screen with a deterministic track fixture
-python tools/preview_minigames.py  # real snake/bricks logic tests, screenshots and updated launcher
-python tools/make_clawd_album.py --check # embedded GIFs match the original assets
+python tools/native_checks.py      # 在主机运行真实共享 C++ 逻辑，需要 g++
+python tools/preview_pet.py        # 渲染共享宠物代码，还需要 Pillow
+python tools/preview_launcher.py   # 使用 Python 预览圆环布局
+python tools/preview_readme.py     # 从实际 C++ 绘图重新生成说明图片，需要 Pillow
+python tools/preview_power.py      # 以充电测试数据渲染 POWER 页面
+python tools/preview_hypno.py --animation # 实际 C++ 画面，可选生成摆动 GIF
+python tools/preview_music.py      # 以固定曲目测试数据渲染音乐界面
+python tools/preview_minigames.py  # 运行真实小游戏逻辑、生成截图并更新主页图
+python tools/make_clawd_album.py --check # 检查内置 GIF 与原始资源一致
 ```
 
-Checks cover photo scaling and crop boundaries, ring dragging and snapping,
-save migration, care, wardrobe persistence, accessory clipping in both RGB565 byte
-orders, button press/release feedback, BQ27220 charging state, HYPNO sensor motion/sensitivity/pause
-and UI pacing across timer wrap. Host renders
-complement device checks; they do not measure LCD transfer or touch-controller latency.
+检查覆盖相册缩放与裁切边界、圆环拖动与吸附、旧存档迁移、养成、衣柜保存、两种 RGB565 字节序下的配饰裁切、
+按钮按下与松手反馈、BQ27220 充电状态、HYPNO 传感器运动/灵敏度/暂停，以及毫秒计数回绕时的界面调度。
+主机软件渲染用于补充实机检查，不能测量 LCD 传输或触摸控制器延迟。
 
-The launcher's LCD path copies PSRAM pixels into a reusable 8-row internal DMA
-buffer and waits for each strip before reusing it. This avoids the failed large
-transfers that left stale red bands on screen. Serial `D` includes a completed
-transfer counter; transfer errors and timeouts are reported instead of ignored.
+启动器将 PSRAM 中的像素复制到可复用的 8 行内部 DMA 缓冲区，每条传输结束后才复用缓冲区，
+避免大块传输失败造成底部红条残留。串口 `D` 包含已完成的传输计数；传输错误和超时会明确记录。
 
-## The system
+<a id="the-system"></a>
 
-The firmware that occupies `factory` is the project's own little system: it boots into
-a launcher ring of games, and each game is an independent module behind the `Game`
-interface. Adding an app means appending its class instance to `GAMES`; add mini-games to `MINI_GAMES` in
-`system/system.ino`.
+## 系统结构与功能
+
+`factory` 中运行的是本项目自己的小型系统，启动后显示应用圆环。
+每个应用通过 `Game` 接口独立实现；添加应用时在 `system/system.ino` 的 `GAMES` 中注册，
+添加小游戏则注册到 `MINI_GAMES`。
 
 ```
 system/
-├── system.ino            setup/loop, screen dispatch, the game registry
-├── gfx.{h,cpp}           framebuffer primitives, rotated 2bpp sprites, 8x8 text
-├── input.{h,cpp}         tilt (with auto-trim), touch, BOOT button
-├── arena.{h,cpp}         the shared backdrop: wall ring, floor dots
-├── launcher.{h,cpp}      shared home/folder carousel and navigation tiles
-├── game.h                the Game interface
-├── game_clawd.{h,cpp}    tilt-controlled rolling clawd
-├── game_tap.{h,cpp}      touch-controlled clawd tap
-├── game_snake.{h,cpp}    15×15 head-relative tap controls, turn queue and pause
-├── game_bricks.{h,cpp}   left/right screen touch zones, 20 bricks, three lives and pause
-├── game_pet.{h,cpp}      CLAWD PET: care, egg, evolution, gestures and voice presentation
-├── outfits.{h,cpp}       twenty accessories over the existing pet body
-├── game_photos.{h,cpp}   SD-card photos and animations, fill / fit toggle
-├── clawd_album.{h,cpp}   24 built-in original Clawd GIFs, read directly from flash
-├── game_hypno.{h,cpp}    sensor-driven pocket watch, pause and motion sensitivity
-├── game_music.{h,cpp}    SD audio player, controls and audio-driver ownership
-├── game_settings.{h,cpp} volume, and what is under the hood
-├── power.{h,cpp}         the BQ27220 fuel gauge
-├── clawd_sprite.h        the sprite + palette, shared by both games
-├── assets_clawd.h        generated 2bpp sprite
-├── assets_icons.h        generated per-app launcher icons
-├── assets_mon.h          generated seven-form pet bodies
-├── assets_font.h         generated 8x8 ASCII font
-└── partitions.csv        must match the installed layout — see Firmware slots below
+├── system.ino            初始化、主循环、页面分发和应用注册表
+├── gfx.{h,cpp}           帧缓冲绘图、旋转 2bpp 精灵、8×8 文字
+├── input.{h,cpp}         带自动微调的倾斜输入、触摸及 BOOT 按键
+├── arena.{h,cpp}         场地边框与背景点阵
+├── launcher.{h,cpp}      主页和文件夹共用的圆环及导航图标
+├── game.h               Game 接口
+├── game_clawd.{h,cpp}    倾斜控制的滚动 Clawd
+├── game_tap.{h,cpp}      点击 Clawd 小游戏
+├── game_snake.{h,cpp}    15×15 贪吃蛇、蛇头相对点击、转向队列和暂停
+├── game_bricks.{h,cpp}   左右半屏控制的打砖块、20 块砖、三条命和暂停
+├── game_pet.{h,cpp}      宠物养成、蛋、进化、手势及语音表现
+├── outfits.{h,cpp}       叠加在原宠物身体上的 20 种配饰
+├── game_photos.{h,cpp}   SD 卡相册及全屏裁切/完整显示切换
+├── clawd_album.{h,cpp}   直接从闪存读取的 24 个原始 Clawd GIF
+├── game_hypno.{h,cpp}    传感器驱动的怀表、暂停及运动灵敏度
+├── game_music.{h,cpp}    SD 音乐播放器、控制及音频驱动管理
+├── game_settings.{h,cpp} 音量与系统设置
+├── power.{h,cpp}         BQ27220 电量计
+├── clawd_sprite.h        共享精灵与调色板
+├── assets_clawd.h        生成的 2bpp 精灵
+├── assets_icons.h        生成的应用图标
+├── assets_mon.h          生成的七种宠物身体
+├── assets_font.h         生成的 8×8 ASCII 字体
+└── partitions.csv        必须匹配设备现有布局，详见固件分区
 ```
 
-The six home entries are CLAWD PET, PHOTOS, MUSIC, HYPNO, GAMES and SETTINGS.
-GAMES opens a second carousel with CLAWD ROLL, CLAWD TAP, SNAKE, BRICKS and BACK.
-Both rings use the same touch-drag, tap and tilt controls and remember their selection.
-Each module draws its own icon; the pet has one entry for both care and voice.
-CLAWD PET keeps its classic orange launcher icon; inside the app, the creature's
-body color continues to follow its current evolution form.
+主页有 CLAWD PET、PHOTOS、MUSIC、HYPNO、GAMES、SETTINGS 六个入口。
+GAMES 内是包含 CLAWD ROLL、CLAWD TAP、SNAKE、BRICKS 和 BACK 的第二层圆环。
+两层圆环共用拖转、点击和倾斜操作，并分别记住选中位置。各模块自行绘制图标；宠物养成与语音共用同一入口。
+CLAWD PET 保留经典橙色主页图标，进入应用后，身体颜色随当前进化形态变化。
 
-Battery voltage, percentage, signed current and BatteryStatus come from the BQ27220
-gauge. SETTINGS → POWER separately shows USB CONNECTED when the ESP32 receives
-USB host packets, and the battery's measured CHARGING, DISCHARGING, FULL or
-CHARGE UNKNOWN state. The delayed DSG flag cannot override a new current reading.
-A cable connection or 100% reading alone is not treated as proof
-of charging or completed charging; failed status reads show STATUS UNKNOWN.
-USB connection detection works with the computer's serial monitor closed. A power
-bank/charger sends no host packets, so an absent USB label does not prove the cable
-is unplugged. Battery-current detection remains independent of USB data traffic.
-Zero current is displayed as CHARGE UNKNOWN: it cannot confirm the charger chip's
-state. It is not displayed as "not charging".
-Serial `B` reports USB status, connection/disconnection counts and read-only gauge
-registers; `S` opens SETTINGS for display checks.
+电池电压、百分比、带正负号的电流及 BatteryStatus 均来自 BQ27220 电量计。
+SETTINGS → POWER 在收到 USB 主机数据包时单独显示 USB CONNECTED，同时按实际测量显示
+CHARGING、DISCHARGING、FULL 或 CHARGE UNKNOWN。延迟更新的 DSG 标志不能覆盖新电流读数。
+仅插线或显示 100% 不能证明正在充电或已充满；状态读取失败显示 STATUS UNKNOWN。
+关闭电脑串口监视器后仍能检测 USB 连接。充电宝和普通充电器不发送主机数据包，
+因此没有 USB 标签不能证明线没插上，电池电流检测与 USB 数据通信彼此独立。
+零电流显示 CHARGE UNKNOWN，因为它无法确认充电芯片状态，不会显示成“没有充电”。
+串口 `B` 报告 USB 状态、插拔计数及只读电量计寄存器；`S` 打开设置页供显示检查。
 
 **电池容量必须匹配实物。** BQ27220 的默认容量为 3000mAh，不能据此认定实际装有 3000mAh 电池。
 本机用户确认电池为 **500mAh / 1.85Wh，充电限制电压 4.2V**。串口 `C500` 显式配置该电池：
@@ -285,12 +283,11 @@ registers; `S` opens SETTINGS for display checks.
 异常的完整电气原因仍未确定，任意充电器兼容性与充满状态尚未完整验证。恢复失败仍显示 **CHARGE UNKNOWN**。
 正电流表示电量计测到电池有净流入电流，不代替充电芯片 STAT 状态，也不会用 USB 连接直接判定充电。
 
-**SETTINGS** has VOLUME, SYSTEM, NET, USB, POWER and WIFI pages behind a small arc menu. VOLUME is the assistant's level,
-kept in the NVS key its own AudioCodec::Start() reads — see system/audio.h for why that
-key and not the codec's register, which the assistant rewrites on every boot. SYSTEM is
-the chip, memory, build and battery; NET shows stored assistant configuration. USB
-provides the SD-card access mode. WIFI starts a local hotspot for media transfer;
-the integrated voice pet retains its own assistant networking configuration.
+**SETTINGS 设置**通过小型弧形菜单提供 VOLUME、SYSTEM、NET、USB、POWER 和 WIFI 页面。
+VOLUME 与语音助手共用音量，保存在助手 `AudioCodec::Start()` 读取的 NVS 键中；
+使用该键而非编解码器寄存器的原因见 `system/audio.h`，因为助手会在每次启动时重写寄存器。
+SYSTEM 显示芯片、内存、编译及电池信息；NET 显示已保存的助手配置；USB 提供 SD 卡访问模式；
+WIFI 开启本地媒体传输热点。集成语音宠物保留自己的助手联网配置。
 
 **无线传音乐和照片：SETTINGS → WIFI → START HOTSPOT。**
 
@@ -347,116 +344,86 @@ USB 插入后会自动给主板供电；插线时 PWR 的关机请求无法切�
 
 左图为检测到电脑且电量计报告正向电流；右图为检测到电脑、零电流且充电状态未确认。两种状态均不会再显示 ON BATTERY。
 
-**Controls.** Drag a finger around the application ring to rotate it; release to snap
-to the nearest app. Tap an icon or the centre to open it. Tilt remains optional and
-is suppressed during touch. The home screen has no clock. Hold BOOT in a game to
-return to the GAMES folder; hold it there or tap BACK to return home. Other apps
-return directly home. In the voice pet a long press returns to the launcher firmware.
+**操作方式。** 沿应用圆环拖动，松手后吸附到最近入口；点图标或圆环中心即可打开。
+倾斜操作仍可使用，触摸期间暂停响应倾斜。主页不显示时钟。
+在游戏里长按 BOOT 返回 GAMES 文件夹，在文件夹里长按 BOOT 或点 BACK 返回主页；其他应用直接返回主页。
+语音宠物中长按 BOOT 返回启动器固件。
 
-**PHOTOS.** Includes **24 distinct original Clawd GIFs**, followed by the SD card's
-`/Photos` contents. Swipe left for next and right for previous, or tap the right/left
-side. The bottom shows the current index and total. Holding for 650ms keeps its
-original function: toggle centre-cropped full-screen view and complete-image fit;
-release after a hold never advances the picture. The default fills the round panel.
-Built-in full-screen view centers the visible artwork with a consistent body scale;
-complete-image view retains the original canvas. Transparent pixels use the dark
-background, with previous-frame disposal and per-frame palettes composited correctly.
-GIF coordinates are cached, deadlines use wall-clock time, and unchanged pictures
-produce no redundant LCD transfers.
-The built-in GIFs play with no SD card and are read
-directly from flash, without loading the whole album into RAM or changing existing
-SD files. Baseline JPEG, BMP and animated GIF are supported for SD pictures.
-`tools/make_clawd_album.py` embeds the deduplicated source bytes unchanged (1,947,672
-bytes of flash), and `--check` verifies that the generated header still matches.
-Serial `P` opens PHOTOS, `N` advances and `J` goes back for device checks.
-Serial `D` reports actual animation FPS and decode/compose/scale timing; `F` captures
-the current framebuffer. `python tools/verify_album_frames.py` compares all 1,262
-source animation frames against independent Pillow decoding, pixel for pixel.
-That check requires g++, Pillow, NumPy and a local AnimatedGIF source installation;
-use `--gif-library /path/to/AnimatedGIF/src` to override its location. All 24 gallery
-entries have also been captured from the physical board and matched to source frames;
-the corrected background, animation and size were confirmed on the device.
-On the physical board, three sampled animations ran at 14.88–14.98fps (the source
-frames alternate 60/70ms). The previous compositor/cadence ran at 9.53–10.07fps.
-This leaves the original animations intact rather than replacing them with stills.
+**PHOTOS 相册。** 先列出 **24 个不同的原始 Clawd GIF**，再追加 SD 卡 `/Photos` 中的图片。
+左滑下一张、右滑上一张，也可点击左右两侧翻页，底部显示当前页码和总数。
+长按 650ms 保留原功能：切换居中裁切全屏和完整图片适配；长按后松手不会翻页，默认填满圆屏。
+内置动图的全屏视图对可见主体居中并保持一致的身体大小，完整显示模式保留原始画布。
+透明像素使用深色背景，正确合成前帧清除规则和逐帧调色板。GIF 缩放坐标会缓存，
+播放期限使用真实时间，画面未变时不重复传输 LCD。
+内置 GIF 无需 SD 卡，直接从闪存读取，不将整个相册放入内存，也不改动已有 SD 文件。
+SD 图片支持基线 JPEG、BMP 和动画 GIF。
+`tools/make_clawd_album.py` 去重后原样嵌入源文件字节，占用闪存 1,947,672 字节；`--check` 检查生成头文件是否仍匹配源文件。
+串口 `P` 打开相册，`N` 下一张，`J` 上一张；`D` 报告真实动画帧率及解码/合成/缩放耗时，`F` 读取当前帧缓冲。
+`python tools/verify_album_frames.py` 将全部 1,262 个动画源帧与独立 Pillow 解码结果逐像素比较。
+该检查需要 g++、Pillow、NumPy 及本地 AnimatedGIF 源码，可用 `--gif-library /path/to/AnimatedGIF/src` 指定位置。
+24 个相册条目也均已从实机采集并匹配源帧，背景、动画和人物尺寸修正已获实机确认。
+三组实机动画抽样为 14.88–14.98fps，源帧间隔交替为 60/70ms；旧合成与调度实现为 9.53–10.07fps。
+因此保留了原始动画，没有改成静态图。
 
-**MUSIC.** Reads MP3, WAV, AAC/M4A, FLAC and Ogg files in the card's `/Music`
-folder. The three bottom controls are previous, pause/resume and next; the progress
-bar seeks and the upper `−` / `+` controls adjust volume. Tracks wrap around at EOF.
-When the folder has no supported music, an original eight-second PCM WAV demo is
-created as `/Music/Badge-Loop.wav`; existing user tracks are not replaced.
-Hold BOOT for about 900ms to return home. Entering/exiting releases and restores
-the I2S driver without a reboot; the local decoder fork uses the ES8311's 256fs
-MCLK and disables its IDF 5 channel before deleting it. Serial `M` opens the player,
-`V` pauses/resumes and `N` / `J` change tracks. Decoding and I2S output run in a
-separate core-0 task so LCD transfers and touch polling cannot starve playback.
-Player/SD operations are serialized; exit waits for the worker before deleting the
-decoder, unmounting the card and restoring launcher audio.
+**MUSIC 音乐。** 读取 SD 卡 `/Music` 中的 MP3、WAV、AAC/M4A、FLAC 和 Ogg。
+底部三个按钮是上一首、暂停/继续和下一首；点击进度条跳转，顶部 `−` / `+` 调节音量，播放结束后循环切歌。
+目录没有支持的音乐时，会生成原创的 8 秒 PCM WAV 演示曲 `/Music/Badge-Loop.wav`，不会替换用户已有歌曲。
+长按 BOOT 约 900ms 返回主页。进入和退出时无需重启，通过释放及恢复 I²S 驱动切换音频使用权；
+本地解码器分支使用 ES8311 的 256fs MCLK，并在删除 IDF 5 通道前先禁用通道。
+串口 `M` 打开播放器，`V` 暂停/继续，`N` / `J` 切歌。
+解码和 I²S 输出运行在核心 0 的独立任务中，避免 LCD 传输和触摸轮询饿死音频。
+播放器与 SD 操作串行执行；退出时先等待音频任务结束，再删除解码器、卸载存储卡和恢复启动器音效。
 
-The PCM observer explicitly forwards samples to I2S. Serial `D` distinguishes
-callback attempts from complete stereo frames accepted by I2S, and reports write
-errors, worker timing and remaining stack. `U40` temporarily sets the shared codec
-volume to 40% without saving it. On the physical board, a 44.1kHz/128kbps stereo MP3
-delivered approximately 44,100 stereo frames per second with the music animation
-running, versus approximately 28,000 when decoding ran once per UI loop.
+PCM 回调明确将采样送入 I²S。串口 `D` 区分回调尝试次数和 I²S 实际接收的完整双声道帧，
+并报告写入错误、工作任务耗时和剩余栈。`U40` 临时将共享编解码器音量设为 40%，不保存。
+实机播放 44.1kHz / 128kbps 双声道 MP3 并同时运行音乐动画时，约输出 44,100 双声道帧/秒；
+原先每轮界面循环只解码一次时约为 28,000 帧/秒。
 
-**HYPNO.** Shake the badge left/right to drive the gold pocket watch. It uses the
-QMI8658 acceleration sample already read by the input loop, with an inertial pendulum
-and damping, with a relaxed free-swing period of about 3.4 seconds. A slowly tracked
-gravity baseline permits different holding positions;
-there is no automatic periodic swing while the badge is still. The rings move with
-the pendulum's motion and stop as it settles.
-Tap the scene or middle pause/play button to freeze/resume; `−` / `+` select SOFT,
-NORMAL or STRONG motion sensitivity. Motion during pause is sampled without building
-up an impulse for resume. Dragging cancels a tap. Redraws are capped at 30fps;
-paused/resting frames do not repeatedly transfer the display. Hold BOOT about 900ms
-to return home. Each entry starts stationary at NORMAL sensitivity; saved pet and
-battery data are untouched. Serial `Y` opens HYPNO; `D` reports real raw acceleration,
-motion drive, angle and velocity. The software preview feeds simulated acceleration
-through the same motion/rendering code and is not a recording of a physical shake.
+**HYPNO 惯性怀表。** 左右晃动吧唧驱动金色怀表，复用输入循环已读取的 QMI8658 加速度，
+以惯性摆和阻尼模拟运动，自由摆动周期约 3.4 秒。缓慢跟踪的重力基线适应不同握持姿态，
+设备静止时不会自动周期摆动；同心圆随钟摆运动，摆停后也停止。
+点击画面或中央暂停/播放按钮可冻结或继续；`−` / `+` 选择 SOFT、NORMAL、STRONG 三档灵敏度。
+暂停期间仍采样运动，但不会积累恢复时的冲量；拖动会取消点击。
+绘制上限为 30fps，暂停或静止时不反复传输屏幕。长按 BOOT 约 900ms 回主页。
+每次进入从静止和 NORMAL 灵敏度开始，不改动宠物存档及电池数据。
+串口 `Y` 打开 HYPNO，`D` 报告真实原始加速度、运动驱动量、角度和角速度。
+软件预览向相同的运动及绘图代码输入模拟加速度，不是实物晃动录像。
 
 ```bash
-./tools/deploy_game.sh system          # update the launcher app in factory; keep ota_0
-./tools/deploy_game.sh games/clawd-roll   # or deploy the standalone game sketch
-python tools/make_font.py              # regenerate the bitmap font
-python tools/make_mon_sprites.py       # regenerate the shared pet's seven forms
-python tools/make_icon_sprites.py      # regenerate the three launcher icons
-python tools/make_icon.py              # regenerate the project icon
+./tools/deploy_game.sh system          # 更新 factory 启动器，保留 ota_0
+./tools/deploy_game.sh games/clawd-roll   # 或部署独立游戏工程
+python tools/make_font.py              # 重新生成位图字体
+python tools/make_mon_sprites.py       # 重新生成共享宠物的七种形态
+python tools/make_icon_sprites.py      # 重新生成三个启动器图标
+python tools/make_icon.py              # 重新生成项目图标
 
-python tools/preview_pet.py            # check the pet's layout before flashing it
-python tools/preview_icons.py          # the launcher icons, on the carousel's discs
-python tools/preview_launcher.py       # likewise for the carousel
-python tools/check_preview_sync.py     # run the real C++ regression checks
+python tools/preview_pet.py            # 烧录前检查宠物布局
+python tools/preview_icons.py          # 检查圆环图标底盘上的应用图标
+python tools/preview_launcher.py       # 检查圆环布局
+python tools/check_preview_sync.py     # 运行真实 C++ 回归检查
 ```
 
-The Arduino launcher renders directly into one 360×360 RGB565 framebuffer in PSRAM
-and pushes changed bands to the panel (`Game::dirtyY0/dirtyY1`). The ESP-IDF voice pet
-uses the same C++ drawing code through an LVGL 9 display adapter, with a drawing
-buffer and a stable image buffer in PSRAM; changed rows are copied and invalidated.
-Touch sampling runs independently of drawing, including while the display is idle.
+Arduino 启动器直接绘制到 PSRAM 中的 360×360 RGB565 帧缓冲，并通过 `Game::dirtyY0/dirtyY1` 只传输变化行。
+ESP-IDF 语音宠物通过 LVGL 9 显示适配层使用相同的 C++ 绘图代码，在 PSRAM 中保留绘制缓冲和稳定图像缓冲，
+只复制及标记变化行。触摸采样独立于绘图运行，屏幕空闲时也保持扫描。
 
-**Tilt input.** This board uses a fixed measured axis mapping: Z is perpendicular
-to the screen, screen X is inverted sensor X, and screen Y is sensor Y. A boot-time
-average is logged for diagnostics; it does not select the mapping. There is no
-boot-angle zeroing calibration: with gravity-sensed tilt,
-level *is* zero, and subtracting a boot-time snapshot only bakes in whatever angle
-the board happened to be held at — worse, the constant residual that leaves behind
-pins a ball against a wall. Instead a slow auto-trim removes the accelerometer's
-static offset, but only while the board is near level, so it never fights a player
-who is deliberately leaning in.
+**倾斜输入。** 本板采用实测固定轴映射：Z 轴垂直屏幕，屏幕 X 为传感器 X 取反，屏幕 Y 为传感器 Y。
+启动时记录平均值仅供诊断，不据此选择映射，也不按启动时角度归零。
+重力倾斜检测中，水平本身就是零点；扣除启动姿态会把当时的握持角度固定成偏差，导致小球一直顶着墙。
+实际使用缓慢自动微调，只在设备接近水平时消除加速度计静态偏置，不会抵消玩家主动倾斜。
 
-## Games
+<a id="games"></a>
+
+## 小游戏与宠物
 
 ### clawd-roll
 
-<img src="games/clawd-roll/icon.png" width="180" alt="clawd-roll icon">
+<img src="games/clawd-roll/icon.png" width="180" alt="clawd-roll 游戏图标">
 
-Tilt the board and clawd rolls; let up and it coasts; hit the arena wall and it
-bounces, with a ring that expands at the point of contact. No score, no goal — it is a
-thing that feels good to wobble.
+倾斜设备让 Clawd 滚动，放平后依惯性滑行，撞到场地边缘会反弹并在碰撞点扩散圆环。
+没有分数或通关目标，主要用于体验倾斜与碰撞的手感。
 
-Also buildable as a standalone single-game firmware, which is useful when you want to
-iterate on the physics without the launcher in the way:
+也可编译成独立单游戏固件，便于单独调整物理效果：
 
 ```bash
 ./tools/deploy_game.sh games/clawd-roll
@@ -466,10 +433,8 @@ python tools/convert_sprite.py games/clawd-roll/clawd-source.png \
 
 ### clawd-tap
 
-Touch counterpart: clawd pops up somewhere in the arena, waits a shrinking moment,
-and vanishes. Tap it to score, three time-outs and it is over. It exists as much to
-exercise the game interface as to be played — between it and clawd-roll both input
-paths and both ends of the drawing cost are covered.
+点击版小游戏：Clawd 在场地中随机出现，停留时间逐渐缩短，点击得分，错过三次结束。
+它同时用于验证游戏接口；与 clawd-roll 一起覆盖触摸和倾斜两种输入，以及不同的绘制负载。
 
 ### SNAKE / BRICKS
 
@@ -509,156 +474,123 @@ paths and both ends of the drawing cost are covered.
 
 ### CLAWD PET
 
-The former clawd-pet and pixel-mon are one app. It combines the touch/drag/poke and
-shake-to-scrub interaction with eggs, two evolution tracks and seven forms. The
-same care and drawing source runs in the Arduino launcher and the ESP-IDF voice
-companion. When no current save exists, migration prefers the old PIXEL MON save,
-then the original pet save. Old saves are retained; new progress uses `clawdpet2/blob`.
+原来的 clawd-pet 和 pixel-mon 已合并为一个应用，整合触摸、拖动、戳动、摇晃清洁、蛋、两条进化路线及七种形态。
+Arduino 启动器和 ESP-IDF 语音宠物共用养成与绘图代码。不存在当前存档时，优先迁移旧 PIXEL MON 存档，
+其次迁移早期宠物存档；旧存档保留，新进度使用 `clawdpet2/blob`。
 
 点击 **SCRUB** 后轻轻来回摇动设备，清除 5 处污点；完成增加 55 点清洁度。
 摇晃识别使用三轴变化，支持横向、纵向摇动；点击屏幕可结束，20 秒后自动退出并保留已完成部分的清洁度。
 语音桌宠沿用 [Waveshare 官方 QMI8658 驱动](https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.85B/blob/main/Examples/ESP-IDF-V5.5.3/06_qmi8658_test/components/waveshare__qmi8658/qmi8658.c) 的 6DOF / 8g 配置，主机仍每 50ms 采样一次，避免原先仅加速度配置下持续读到零的情况。
 
-The optional integrated voice version uses XiaoZhi's open client with this board's
-existing hardware support. The on-screen creature listens, responds with expressions
-and subtitles, and exposes its current needs through a read-only MCP tool.
-Press BOOT once or tap the top of the pet page to start/stop a conversation; hold
-BOOT to return home. Care buttons work while chat is idle, and the idle header no
-longer shows “待命”.
-See [CLAWD PET voice build and controls](docs/clawd-pet-voice.md).
+可选的集成语音版基于小智开源客户端及本板已有硬件支持。屏幕上的宠物可以聆听、用表情和字幕回应，
+并通过只读 MCP 工具提供当前需求。短按 BOOT 或点击宠物页顶部开始/结束对话，长按 BOOT 返回主页。
+对话空闲时养成按钮仍可用，空闲页头不再显示“待命”。详见[语音宠物编译与操作](docs/clawd-pet-voice.md)。
 
-**The egg.** The first screen is an egg, drawn rather than a sprite. It hatches while it
-is *warm*, which means energy and cleanliness both above 40, so the needs are
-load-bearing before there is anything to look after: about three minutes of a warm egg,
-plus four points a poke. Tapping it makes it wobble; something taps back. Until it
-hatches the live menu items are PET and STYLE; rename remains inside STYLE.
+**孵蛋。** 初始界面是程序绘制的蛋。能量和清洁度都高于 40 时才算温暖并推进孵化，
+持续温暖约三分钟可孵化，每戳一次额外增加四点进度；点击时蛋会晃动并产生回应。
+孵化前菜单只开放 PET 和 STYLE，重命名仍放在 STYLE 内。
 
-**The tree.** Two tracks accumulate in the background, from the *state* of the needs
-rather than from one button pressed at the right moment:
+**进化路线。** 两条路线根据持续养成状态在后台累积，而不是靠某个时刻点中按钮：
 
-| track | fed by |
+| 路线 | 累积来源 |
 |---|---|
-| joy | happiness, plus playing, petting, being poked |
-| vigor | energy and cleanliness, plus sleeping and finishing a scrub |
+| joy（快乐） | 幸福值，以及玩耍、抚摸和戳动 |
+| vigor（活力） | 能量与清洁度，以及睡觉和完成清洁 |
 
-Evolution then needs both an age and care points — one point per minute spent with the
-four needs averaging above 70 — and the gates are short on purpose: a badge is picked up
-for ten minutes at a time, so a tree that needs an hour of good care is a tree that never
-gets climbed.
+进化同时需要年龄和养成点：四项需求平均值高于 70 时，每分钟增加一点养成点。
+门槛按短时使用设计，拿起吧唧玩十分钟也能看到成长，不必连续照顾数小时。
 
-| | gate | outcome |
+| 阶段 | 条件 | 结果 |
 |---|---|---|
-| EGG → BABY | hatch reaches 100% | **PIP** |
-| BABY → CHILD | 5 min, care 6 | whichever track leads: **LEAF** (joy) or **AQUA** (vigor) |
-| CHILD → ADULT | 20 min, care 25 | **BLOOM** / **TIDE** along the bloodline, **SOLAR** if the two tracks end level, **DUSK** if the average care of that stage fell below 45 |
+| EGG → BABY | 孵化达到 100% | **PIP** |
+| BABY → CHILD | 5 分钟、养成点 6 | 按领先路线变为 **LEAF**（快乐）或 **AQUA**（活力） |
+| CHILD → ADULT | 20 分钟、养成点 25 | 沿血统变为 **BLOOM** / **TIDE**；路线点数相同为 **SOLAR**；该阶段平均养成低于 45 为 **DUSK** |
 
-The announcement names the branch and the reason — `PIP is now BLOOM (joy)` — and the
-serial line prints joy, vigor and the care average, so a surprising result can be checked
-rather than argued with.
+进化提示会写明分支与原因，例如 `PIP is now BLOOM (joy)`；串口同时打印快乐点、活力点和平均养成值，便于核对结果。
 
-**Sleep is the only thing that restores energy**, at nine points a minute, and the mon
-wakes itself when it is full. Resting contributes to the vigor branch; while asleep,
-FEED, PLAY, PET and SCRUB are disabled, while REST and STYLE remain available.
+**只有睡觉能恢复能量**，每分钟恢复九点，补满后自动醒来。休息会推动活力路线；
+睡眠期间 FEED、PLAY、PET、SCRUB 禁用，REST 和 STYLE 仍可操作。
 
-**The dex.** The bottom line reads `GROW 3/6  SEEN 2/7` — the first half names whichever
-condition is actually holding evolution up, and switches to `AGE 4m` once care is done and
-only the clock is left. `SEEN` is a bitmask that survives a new egg, which is the point of
-the wardrobe's secondary action: once the mon is an adult, RENAME becomes NEW EGG.
-Starting over is how the other five forms get found.
+**图鉴与重新孵化。** 底部 `GROW 3/6  SEEN 2/7` 的前半项提示当前阻碍进化的条件；
+养成点足够、只差年龄时，切换为 `AGE 4m`。`SEEN` 通过位掩码保存已见形态，换新蛋后仍保留。
+宠物成年后，衣柜的 RENAME 次要操作变为 NEW EGG，可重新孵化以收集其他五种形态。
 
-The forms are clawd's silhouette at one size per stage with the form's colour and a
-one-pixel outline. ORIGINAL adds the form's head mark — a leaf, a drop, a flower,
-a crest, a halo, two dim puffs. `tools/make_mon_sprites.py` regenerates the bitmaps; the
-marks are code, because at this size a mark is three shapes and a bitmap is another
-1.5 KB per form.
+各阶段沿用 Clawd 轮廓与固定阶段尺寸，搭配形态颜色和一像素描边。
+ORIGINAL 会添加对应头部标记：叶子、水滴、花、冠饰、光环或两团暗色小云。
+`tools/make_mon_sprites.py` 重新生成身体位图；标记由代码绘制，避免每种形态额外增加约 1.5KB 位图。
 
-**Wardrobe.** STYLE opens twenty pixel accessories, plus ORIGINAL: a flower,
-hard hat, headphones, thought bubble, bubbles, sleeping cap, glasses, book,
-delivery bag, bow, crown, beret, halo, star, wizard hat, heart, cap, earmuffs,
-rainbow and antenna. Swipe the
-preview or use the arrows, choose WEAR to save or BACK to cancel. Every accessory
-uses the same existing body dimensions, eyes and voice expression; it never scales
-or replaces the creature. The GIF references are kept in `assets/clawd-gifs/`, while
-`system/outfits.cpp` draws the lightweight accessories directly. Selection uses the
-independent `clawdpet2/outfit` key, preserving the original care-save layout.
+**衣柜。** STYLE 提供 ORIGINAL 原始样式及 20 种像素配饰：花朵、安全帽、耳机、思考气泡、泡泡、睡帽、
+眼镜、书、配送包、蝴蝶结、皇冠、贝雷帽、光环、星星、巫师帽、爱心、鸭舌帽、耳罩、彩虹、天线。
+滑动预览或点击箭头切换，点 WEAR 保存，点 BACK 取消。配饰始终使用原有身体尺寸、眼睛和语音表情，不缩放或替换宠物。
+GIF 参考保留在 `assets/clawd-gifs/`，轻量配饰由 `system/outfits.cpp` 直接绘制。
+选择结果使用独立的 `clawdpet2/outfit` 键保存，不改变原有养成存档布局。
 
-## Firmware slots
+<a id="firmware-slots"></a>
 
-The current installation has two app images. The Arduino launcher keeps games,
-photos and settings in `factory`; the integrated CLAWD PET runs care and XiaoZhi
-voice together in `ota_0`. Installing it **replaces the original XiaoZhi 2.2.4 app**
-in that slot, after backing it up, while retaining the shared fonts and speech models.
+## 固件分区
+
+当前安装包含两个应用镜像。Arduino 启动器在 `factory` 中提供游戏、相册和设置；
+集成 CLAWD PET 在 `ota_0` 中同时提供养成与小智语音。安装时先备份，
+再**替换该分区原有的小智 2.2.4 应用**，共享字体和语音模型保留。
 
 ```
-factory  app   0x020000  6.57MiB   Arduino launcher, games, photos, settings
-ota_0    app   0x6c0000  4.00MiB   CLAWD PET + XiaoZhi v2.3.0 voice client
-assets   data  0xac0000  4.00MiB   existing fonts + speech models, preserved
+factory  app   0x020000  6.57MiB   Arduino 启动器、游戏、相册与设置
+ota_0    app   0x6c0000  4.00MiB   CLAWD PET + 小智 v2.3.0 语音客户端
+assets   data  0xac0000  4.00MiB   保留原有字体和语音模型
 ```
 
-Switching app images changes the 8KiB `otadata` boot selector and restarts;
-care interactions and conversations then stay inside the same pet app.
+切换应用镜像时修改 8KiB `otadata` 启动选择区并重启；宠物养成和对话随后都在同一个宠物应用中完成。
 
-| | |
+| 操作 | 行为 |
 |---|---|
-| launcher → open **CLAWD PET** | detects the installed voice pet, selects `ota_0`, restarts into it |
-| voice pet → **hold BOOT** | saves care progress, selects `factory`, restarts into our launcher |
+| 启动器 → 打开 **CLAWD PET** | 检测已安装的语音宠物，选择 `ota_0` 并重启进入 |
+| 语音宠物 → **长按 BOOT** | 保存养成进度，选择 `factory` 并重启回启动器 |
 
-Both directions live in the firmwares themselves; neither needs a host computer, a
-reflash or a power cycle. Erased `otadata` falls back to `factory`; a selected voice
-pet continues to boot until the launcher is selected again. Without the voice image,
-the launcher entry runs the local care-only pet.
+双向切换均由固件自己完成，无需电脑、重新烧录或断电。
+擦除 `otadata` 会回退到 `factory`；选中语音宠物后会持续启动它，直到重新选择启动器。
+未安装语音镜像时，CLAWD PET 入口运行本地养成版。
 
 ```bash
-python tools/switch_slot.py home     # select factory / our launcher
-python tools/switch_slot.py stock    # legacy command name: selects ota_0 / installed voice pet
-python tools/switch_slot.py status   # read the boot selector, then reboot the application
+python tools/switch_slot.py home     # 选择 factory 启动器
+python tools/switch_slot.py stock    # 旧命令名，选择 ota_0 中已安装的语音宠物
+python tools/switch_slot.py status   # 读取启动选择区并重新启动应用
 ```
 
-For updates, use `deploy_game.sh system` for the launcher and
-`install_voice_pet.py --flash` for the voice pet. These app updates preserve the
-bootloader, partition table and shared assets.
+更新启动器使用 `deploy_game.sh system`，更新语音宠物使用 `install_voice_pet.py --flash`。
+两者均保留引导程序、分区表和共享资源。
 
-`install_stack.py` is a **legacy restoration tool**: it installs the launcher and
-restores the original assistant from `backup/`, overwriting the custom voice pet.
-It is not a voice-pet updater. `restore_stock.sh` restores the whole 16MiB image,
-including the original main app, assistant, bootloader, table and saved configuration.
+`install_stack.py` 是**旧版恢复工具**：安装启动器并从 `backup/` 恢复原始助手，覆盖自定义语音宠物，
+不能用来更新语音宠物。`restore_stock.sh` 恢复整片 16MiB 镜像，包括原始主应用、助手、引导程序、分区表和保存的配置。
 
-### Why the games are not entries in the stock system's launcher
+<a id="why-the-games-are-not-entries-in-the-stock-systems-launcher"></a>
 
-That would be the natural place for them, and it is not possible with what Waveshare
-ships:
+### 为什么不直接加进原厂启动器
 
-- The stock system is a **prebuilt binary**. Nothing in the published repository is
-  its source: `05_esp-brookesia` builds the same ESP-Brookesia *framework* with the
-  same stylesheet, but installs only the `SquarelineDemo` app, and the
-  `brookesia_core` component contains framework code only — no settings, weather,
-  music, video or game apps at all.
-- The `assets` partition is a packed resource table, not an app filesystem. Reading
-  it back off the device shows fonts, `srmodels.bin` (speech models) and an
-  `index.json` — there is no runtime app loading and no app store in this build.
+原厂启动器本应是自然的入口，但 Waveshare 公开发布的材料不足以直接修改它：
 
-Upstream ESP-Brookesia does have a runtime-app mechanism (`runtime/brookesia_runtime_js`,
-`_lua`, `_wasm`, `_elf`, plus `app/brookesia_app_store`), so a system built from
-source *could* list the game in a launcher. That is the path to take if a launcher is
-wanted, but the closed stock apps would still need replacements. This project uses
-its own launcher and integrates the open XiaoZhi client into CLAWD PET instead.
+- 原厂系统只提供**预编译二进制**。公开仓库没有其完整源码；`05_esp-brookesia` 使用同一框架和样式，
+  但只安装 `SquarelineDemo`。`brookesia_core` 也仅包含框架，没有设置、天气、音乐、视频或游戏应用。
+- `assets` 分区是打包资源表，不是应用文件系统。实机读回内容是字体、`srmodels.bin` 语音模型和 `index.json`，
+  该版本没有运行时应用加载或应用商店。
 
-`system/partitions.csv` and the standalone game's table encode the existing layout.
-The voice installer checks its generated table against both the full backup and
-the connected board. The app-only launcher deploy assumes this layout is already
-installed; an incompatible table would send runtime lookups to the wrong regions.
+上游 ESP-Brookesia 有运行时应用机制（`runtime/brookesia_runtime_js`、`_lua`、`_wasm`、`_elf` 及
+`app/brookesia_app_store`），因此从源码自行构建的系统可以提供游戏入口，但闭源的原厂应用仍需另行实现。
+本项目采用自己的启动器，并把开源小智客户端集成到 CLAWD PET。
 
-The `otadata` entry format has three traps worth knowing if you touch the code:
-the checksum covers **only the 4-byte `ota_seq`**, not the whole struct; ESP-IDF's
-`esp_rom_crc32_le` inverts both its input and its output (it is *not* zlib's crc32);
-and `ota_state` must be `VALID`, because anything the bootloader finds in
-`PENDING_VERIFY` or `NEW` is treated as unconfirmed and rolled back.
+`system/partitions.csv` 和独立游戏的分区表均对应现有布局。
+语音安装工具会把生成分区表与完整备份、连接的设备交叉核对。
+仅更新应用的启动器部署流程假设现有布局已经正确安装；不兼容的分区表会让运行时查找访问错误区域。
 
-## Back up before you flash
+修改 `otadata` 时需注意三个格式细节：校验和**只覆盖 4 字节 `ota_seq`**，并非整个结构体；
+ESP-IDF 的 `esp_rom_crc32_le` 会对输入和输出都取反，与 zlib 的 crc32 不同；
+`ota_state` 必须为 `VALID`，因为引导程序会把 `PENDING_VERIFY` 或 `NEW` 视为未确认并回滚。
 
-Before modifying a stock device, save its whole flash so it can be restored
-byte-for-byte. Keep that original backup rather than overwriting it with a later
-custom installation. Backups include device configuration and are gitignored.
+<a id="back-up-before-you-flash"></a>
+
+## 烧录前备份
+
+修改原厂设备前，先保存整片闪存，以便逐字节恢复。保留最初的原厂备份，不要用后续自定义安装的备份覆盖。
+备份包含设备配置，已加入 Git 忽略规则。
 
 ```bash
 mkdir -p backup
@@ -666,74 +598,64 @@ esptool --chip esp32s3 --port COM3 --baud 921600 --after watchdog_reset \
     read_flash 0 0x1000000 backup/1.85B-stock-16MB.bin
 ```
 
-Then restore any time with:
+需要时可使用以下命令恢复：
 
 ```bash
-./tools/restore_stock.sh          # uses backup/ if present, else Waveshare's published image
+./tools/restore_stock.sh          # 优先使用 backup/，否则使用 Waveshare 发布镜像
 ```
 
-## Gotchas worth knowing
+<a id="gotchas-worth-knowing"></a>
 
-**The touch controller stops answering I2C when it is idle.** `Touch_Init()` leaves
-the CST816S in auto-sleep, and a sleeping controller does not respond on the bus — so
-code that polls it every frame produces a continuous stream of
-`i2c.master: I2C transaction unexpected nack detected` until the screen is touched.
-The vendor function that is supposed to control this cannot:
+## 常见问题与注意事项
+
+**触摸控制器空闲时不响应 I²C。** `Touch_Init()` 会让 CST816S 保持自动休眠；
+休眠后控制器不响应总线，因此每帧轮询会持续产生 `i2c.master: I2C transaction unexpected nack detected`，直到有人触摸屏幕。
+上游用于控制该行为的函数没有正确写入计算结果：
 
 ```c
 void CST816_AutoSleep(bool Sleep_State) {
   ...
   uint8_t Sleep_State_Set = (uint8_t)(!Sleep_State);
-  Sleep_State_Set = 10;                              // overwrites the computed value
+  Sleep_State_Set = 10;                              // 覆盖了前面计算的值
   I2C_Write_Touch(CST816_ADDR, CST816_REG_DisAutoSleep, &Sleep_State_Set, 1);
 }
 ```
 
-The register needs `0x01` to disable auto-sleep; it always receives `10`. The
-library's `Touch_SetAutoSleep(false)` writes the correct value without the controller
-reset that the vendor function also performs, and `input::init()` calls it.
+关闭自动休眠需要写入 `0x01`，但上述函数总是写入 `10`。
+本地驱动的 `Touch_SetAutoSleep(false)` 写入正确值，并避免上游函数附带的控制器重置；`input::init()` 会调用它。
 
-**The native USB port can strand the chip in download mode.** The USB-C connector
-goes straight to USB-Serial/JTAG. On this badge native HWCDC requires DTR asserted
-for incoming commands; DTR alone does not reset it. Toggling RTS with DTR asserted
-can reset into the ROM download loader. Keep RTS inactive for monitoring and never
-use a reset-based esptool probe just to check whether the application is running.
+**原生 USB 可能使芯片滞留下载模式。** USB-C 直接连接 USB-Serial/JTAG；
+本板原生 HWCDC 接收命令时需要拉起 DTR，单独操作 DTR 不会复位。
+DTR 有效时切换 RTS 可能复位进入 ROM 下载器。串口监视应保持 RTS 无效，不要只为检查应用是否运行而执行会复位的 esptool 探测。
 
-Recovery, in order of convenience:
+可按以下顺序尝试恢复：
 
-1. **Watchdog reset via esptool** — usually enough to break the sticky state and boot
-   the application, with no physical access needed:
+1. **通过 esptool 执行看门狗复位**，通常无需接触设备即可解除滞留并启动应用：
 
    ```bash
    esptool --chip esp32s3 --port COM3 --baud 921600 \
        --after watchdog_reset --connect-attempts 1 read_mac
    ```
 
-   A watchdog reset takes a different path than the RTS/EN reset. Verify that the
-   app is running with `serial_monitor.py` and its startup logs. A failed ROM probe
-   alone cannot distinguish a running app from a disconnected or unavailable port.
+   看门狗复位路径与 RTS/EN 复位不同。应通过 `serial_monitor.py` 及启动日志确认应用已运行；
+   单次 ROM 探测失败不能区分应用正在运行、设备断开或端口不可用。
 
-2. **Cold power cycle** — always works: unplug USB (and if a battery is attached,
-   long-press PWR 2s to power off, then short-press to power on). A cold boot samples
-   the strapping pins correctly with GPIO0 pulled high.
+2. **完整断电重启**：拔下 USB；若连接电池，长按 PWR 约 2 秒关机，再短按开机。
+   完整冷启动会在 GPIO0 被拉高时重新采样启动配置引脚。
 
-Use `tools/serial_monitor.py` instead of ad-hoc pyserial code — it enables DTR for native CDC
-and never pulses RTS, so it attaches and detaches without disturbing a running app:
+串口监视使用 `tools/serial_monitor.py`。它为原生 CDC 启用 DTR、始终不脉冲 RTS，连接和断开不会干扰正在运行的应用：
 
 ```bash
 python tools/serial_monitor.py COM3 115200
-python tools/serial_monitor.py COM3 --seconds 20     # bounded capture
+python tools/serial_monitor.py COM3 --seconds 20     # 限时采集日志
 ```
 
-**Never let esptool rewrite the image header when restoring a dump.** When writing
-a raw flash dump at `0x0`, esptool patches the flash-parameter byte (offset 2, SPI
-mode) if you pass `--flash_mode` / `--flash_size` / `--flash_freq`. The stock
-bootloader's header is marked **DIO** — it upgrades itself to QIO at runtime — so
-forcing `--flash_mode qio` there leaves the bootloader unable to read flash and the
-board watchdog-resets in a loop (`rst:0x7 TG0WDT_SYS_RST`), with nothing on the
-console but the ROM banner.
+**恢复原始备份时，不要让 esptool 改写镜像头。** 将原始闪存备份写入 `0x0` 时，
+指定 `--flash_mode` / `--flash_size` / `--flash_freq` 会让 esptool 修改闪存参数字节（偏移 2，SPI 模式）。
+原厂引导程序头标记为 **DIO**，运行时才升级到 QIO；强行指定 `--flash_mode qio` 会让引导程序读不到闪存，
+设备反复看门狗重启（`rst:0x7 TG0WDT_SYS_RST`），控制台只剩 ROM 启动信息。
 
-Always restore with `keep`:
+恢复时始终使用 `keep`：
 
 ```bash
 esptool --chip esp32s3 --port COM3 --baud 921600 --after watchdog_reset write_flash \
@@ -741,74 +663,67 @@ esptool --chip esp32s3 --port COM3 --baud 921600 --after watchdog_reset write_fl
     0x0 backup/1.85B-stock-16MB.bin
 ```
 
-esptool's "Hash of data verified" is not a safety net here — it checks the data
-*after* patching, so it passes either way. `tools/restore_stock.sh` already does
-this correctly.
+此时 esptool 的 “Hash of data verified” 不能证明原始镜像未被修改，因为它校验的是改写后的数据。
+`tools/restore_stock.sh` 已按保留原参数的方式处理。
 
-**Two different LVGL versions.** The Arduino examples ship **LVGL 8.4.0**; the
-ESP-IDF examples and the stock system use **LVGL 9.5.0**. The APIs are not
-compatible (`lv_scr_act()` vs `lv_screen_active()`, the display/indev API was
-reworked). Check which version any example you copy was written for.
+**两套 LVGL 版本。** Arduino 示例附带 **LVGL 8.4.0**，ESP-IDF 示例和原厂系统使用 **LVGL 9.5.0**。
+两者 API 不兼容，例如 `lv_scr_act()` 与 `lv_screen_active()`，显示和输入设备接口也已调整。
+复用示例前先确认它使用的版本。
 
-**Generic example uploads can replace the installed layout.** The stock system is
-a compiled app, not an OS that installs arbitrary Arduino sketches. An ordinary
-demo upload may also rewrite the bootloader and partition table. This project's
-app-only update tools use the existing slots; a full stock restore deliberately
-replaces both custom apps and their saved configuration.
+**通用示例上传可能替换现有布局。** 原厂系统是已编译的应用，不是可以任意安装 Arduino 草图的操作系统。
+普通示例上传也可能重写引导程序和分区表。本项目仅更新应用的工具沿用已有分区；
+完整原厂恢复则会替换两个自定义应用及其保存的配置。
 
-**Driving ESP-IDF scripts from Git Bash.** Two traps:
+**从 Git Bash 调用 ESP-IDF 脚本。** 有两个常见问题：
 
-1. `cmd.exe /c script.bat` does not work from Git Bash — MSYS rewrites `/c` into a
-   path. Use the doubled form: `cmd.exe //c script.bat`.
-2. `idf_tools.py` and `install.bat` abort with *"MSys/Mingw is not supported"*
-   whenever `MSYSTEM` is in the environment, which Git Bash sets for every child
-   process. `tools/idf_install_steps.bat` and `tools/idf_env.bat` clear it first.
+1. Git Bash 中直接执行 `cmd.exe /c script.bat` 会被 MSYS 把 `/c` 改写为路径，应使用双斜线：`cmd.exe //c script.bat`。
+2. Git Bash 为子进程设置的 `MSYSTEM` 环境变量会使 `idf_tools.py` 和 `install.bat` 报错 “MSys/Mingw is not supported”。
+   `tools/idf_install_steps.bat` 和 `tools/idf_env.bat` 会先清除该变量。
 
-**Only 3 free GPIOs** (7, 8, 18) — everything else is taken by onboard peripherals
-or the flash/PSRAM bus. Need more IO? Use an I²C expander on the exposed I²C
-header. Details in [docs/hardware.md](docs/hardware.md).
+**只有 3 个空闲 GPIO**（7、8、18），其余引脚已被板载外设或闪存/PSRAM 总线占用。
+需要更多 I/O 时可在引出的 I²C 接口上接扩展芯片，详见[硬件文档](docs/hardware.md)。
 
-**3.3V logic.** Classic 5V Arduino boards need level shifting before connecting.
+**逻辑电平为 3.3V。** 连接传统 5V Arduino 板前需要电平转换。
 
-## Current status and next work
+<a id="current-status-and-next-work"></a>
 
-- [x] Six-entry home carousel and GAMES folder carousel, touch-drag, snapping, tilt and parent navigation
-- [x] HYPNO sensor-driven inertial pocket watch, three sensitivities, damping and pause/resume
-- [x] CLAWD ROLL and CLAWD TAP mini-games
-- [x] SNAKE and BRICKS mini-games, touch controls, pause, retry and per-boot high scores
-- [x] Unified CLAWD PET care, eggs, seven evolution forms and migrated saves
-- [x] Integrated XiaoZhi voice, expressions, Chinese subtitles and shared pet state
-- [x] Twenty accessories with unchanged body proportions and persistent selection
-- [x] SD-card photos / GIFs with full-screen crop and complete-image fit
-- [x] Twenty-four built-in Clawd GIFs, available offline alongside SD-card photos
-- [x] Photo left/right navigation and page index, with original hold-to-fill/fit retained
-- [x] Local SD music player with pause, track switching, seeking and volume controls
-- [x] Independent touch scanning, wake on contact and visible button feedback
-- [ ] Longer battery-life and simultaneous voice/care soak tests
-- [ ] Broader media-file and SD-card compatibility checks
+## 当前进度与后续工作
 
-## License
+- [x] 六入口主页与 GAMES 文件夹圆环，支持拖转、吸附、倾斜和逐层返回
+- [x] HYPNO 传感器惯性怀表，三档灵敏度、阻尼与暂停/继续
+- [x] CLAWD ROLL 与 CLAWD TAP 小游戏
+- [x] SNAKE 与 BRICKS 小游戏，支持触摸、暂停、重开和本次开机最高分
+- [x] 统一 CLAWD PET 养成、孵蛋、七种进化形态及旧存档迁移
+- [x] 集成小智语音、表情、中文字幕和共享宠物状态
+- [x] 20 种不改变身体比例的配饰，选择可持久保存
+- [x] SD 卡照片/GIF，全屏裁切与完整图片适配
+- [x] 24 个内置 Clawd GIF，离线可用并与 SD 卡照片共存
+- [x] 相册左右翻页、页码及原有长按切换显示模式
+- [x] SD 本地音乐播放、暂停、切歌、进度跳转与音量控制
+- [x] 独立触摸扫描、触摸唤醒及可见按钮反馈
+- [ ] 更长时间的续航及语音/养成同时运行测试
+- [ ] 更广泛的媒体文件和 SD 卡兼容性检查
 
-**AGPL-3.0** — see [LICENSE](LICENSE), and [NOTICE.md](NOTICE.md) for the third-party
-material this repository carries and its terms.
+<a id="license"></a>
 
-The short version of why that licence: the clawd artwork comes from an AGPL-3.0
-project, so shipping the source under anything more permissive would not have been
-consistent. If the artwork is replaced with something original the obligation goes
-with it. The board drivers are Apache-2.0 (compatible), and the pet's design follows
-an MIT project without copying its code.
+## 许可证
 
-## Links
+采用 **AGPL-3.0**。详见 [LICENSE](LICENSE)，仓库所含第三方材料及其条款见 [NOTICE.md](NOTICE.md)。
 
-- [Waveshare docs](https://docs.waveshare.net/ESP32-S3-Touch-LCD-1.85B)
-- [Waveshare repo](https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.85B)
-- [esp-brookesia](https://github.com/espressif/esp-brookesia) — the HMI framework the stock system is built on
+Clawd 美术素材来自 AGPL-3.0 项目，因此本项目按相应许可发布源码。
+若改用原创素材，需要重新评估该素材带来的许可义务。板卡驱动采用兼容的 Apache-2.0；
+宠物设计参考了 MIT 项目，但没有复制其代码。
+
+<a id="links"></a>
+
+## 相关链接
+
+- [Waveshare 板卡文档](https://docs.waveshare.net/ESP32-S3-Touch-LCD-1.85B)
+- [Waveshare 源码仓库](https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.85B)
+- [ESP-Brookesia](https://github.com/espressif/esp-brookesia)：原厂系统使用的人机界面框架
 - [LVGL](https://lvgl.io)
 
-**Anything that talks to the serial port must finish by booting the app.** On this
-board a chip left in the ROM download loader looks completely dead — black screen, no
-response to the power button — while still enumerating over USB, and a power cycle is
-not an escape because USB keeps it powered. Worse, it is invisible from the host side:
-every subsequent `esptool` call resets on connect and sees a perfectly healthy boot,
-so the tooling keeps reporting success while the screen stays dark. Always end with
-`--after watchdog_reset`, never leave a `--after no_reset` step as the final one.
+**与串口交互的操作最终必须让应用启动。** 本板如果停留在 ROM 下载器，会表现为黑屏、
+电源键无响应，但 USB 仍能枚举；只断开电池也可能因 USB 持续供电而无法退出。
+后续每次 esptool 连接又会复位并看见正常的 ROM 启动，所以工具可能一直报告成功，而屏幕仍然是黑的。
+最终步骤始终使用 `--after watchdog_reset`，不要以 `--after no_reset` 结束。
