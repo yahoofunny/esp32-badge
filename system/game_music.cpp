@@ -15,6 +15,7 @@ static const uint16_t COL_BG=PX(RGB565(0x0B,0x0B,0x16));
 static const uint16_t COL_TEXT=PX(RGB565(0xEB,0xDF,0xCF));
 static const uint16_t COL_DIM=PX(RGB565(0x86,0x72,0x66));
 static const uint16_t COL_ACCENT=PX(RGB565(0xF0,0x9A,0x3C));
+static const uint16_t COL_WARN  = PX(RGB565(0xE0, 0x50, 0x50));
 static const uint16_t COL_TRACK=PX(RGB565(0x28,0x22,0x2B));
 static const char *const MUSIC_EXTS[]={"mp3","wav","m4a","aac","flac","ogg"};
 static bool songFinished=false;
@@ -75,7 +76,14 @@ static bool createDemo() {
     return ok;
 }
 
+// The bin, right of the record. Two taps: the first arms it, the second removes the
+// track that is loaded. Kept away from the transport buttons for that reason.
+static const int BIN_X = 252, BIN_Y = 126, BIN_R = 15;
+static bool deleteArmed = false;
+
 static int musicTarget(int x,int y) {
+    const int bx=x-BIN_X,by=y-BIN_Y;
+    if(bx*bx+by*by<=BIN_R*BIN_R)return 6;
     if(y>=231 && y<=255 && x>=58 && x<=302)return 5;
     const int xs[]={110,180,250,86,274},ys[]={290,290,290,75,75};
     for(int i=0;i<5;++i) {
@@ -225,11 +233,15 @@ void GameMusic::update(float dt) {
             pressed=(!moved && musicTarget(x2,y2)==startTarget)?startTarget:-1;
         } else {
         if(tracking && !moved && input::tapped() && musicTarget(input::tapX(),input::tapY())==startTarget) {
+            if(startTarget!=6 && deleteArmed){deleteArmed=false;redraw=true;}
             if(startTarget==0)nextTrack(-1);
             else if(startTarget==1)togglePlayback();
             else if(startTarget==2)nextTrack();
             else if(startTarget==3 || startTarget==4) {
                 setVolumePercent(volume+(startTarget==3?-10:10));
+            } else if(startTarget==6) {
+                if(!deleteArmed) { deleteArmed=true; redraw=true; }
+                else deleteArmed=false, deleteCurrentTrack();
             } else if(startTarget==5 && player && duration>0) {
                 MusicGuard guard(pump);
                 const int x=constrain(input::tapX(),66,294);
@@ -240,6 +252,22 @@ void GameMusic::update(float dt) {
         }
     }
     if(oldPressed!=pressed)redraw=true;
+}
+
+void GameMusic::deleteCurrentTrack()
+{
+    if (!tracks) return;
+    const char *path = media::pathAt(index);
+    if (!*path) return;
+    if (SD_MMC.remove(path)) {
+        Serial.printf("[music] removed %s", path); Serial.println();
+        tracks = media::list(media::MUSIC_DIR, MUSIC_EXTS, 6);
+        if (tracks <= 0) { index = 0; return; }
+        if (index >= tracks) index = tracks - 1;
+        playCurrent();
+    } else {
+        Serial.printf("[music] could not remove %s", path); Serial.println();
+    }
 }
 
 void GameMusic::render() {
@@ -265,6 +293,14 @@ void GameMusic::render() {
     for(int r=18;r<=46;r+=9)gfx::strokeCircle(180,145,r,1,PX(RGB565(0x43,0x34,0x3A)));
     gfx::fillCircle(180,145,16,COL_ACCENT);gfx::fillCircle(180,145,3,COL_BG);
     gfx::fillCircle(180+cosf(rotation)*29,145+sinf(rotation)*29,2,COL_TEXT);
+    {
+        const uint16_t c = deleteArmed ? COL_WARN : COL_DIM;
+        const int lid = deleteArmed ? 10 : 8;
+        gfx::fillRect(BIN_X - lid, BIN_Y - 9, 2 * lid, 2, c);
+        gfx::fillRect(BIN_X - lid + 3, BIN_Y - 12, 2 * lid - 6, 2, c);
+        gfx::fillRect(BIN_X - lid + 1, BIN_Y - 6, 2 * lid - 2, 12, c);
+        if (deleteArmed) gfx::strokeCircle((float)BIN_X, (float)BIN_Y, 15.0f, 2.0f, COL_WARN);
+    }
     gfx::textCentered(title,202,COL_TEXT,1);
     snprintf(text,sizeof text,"%02d / %02d",index+1,tracks);gfx::textCentered(text,218,COL_DIM,1);
     gfx::fillRect(66,242,228,3,COL_TRACK);

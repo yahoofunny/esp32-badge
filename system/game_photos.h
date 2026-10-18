@@ -22,6 +22,7 @@ public:
 
 private:
     int   index = 0;
+    bool  deleteArmed = false;   // the bin has been tapped once
     bool  failed = false;
     uint32_t frameDueMs = 0;
     int   frameMs = 0;
@@ -29,6 +30,7 @@ private:
     photo::Gesture gesture;
 
     void showCurrent();
+    void deleteCurrent();
     // One entry decoded into the framebuffer. Shared by the visible path and the
     // pre-decode, so there is one place that knows the formats -- and it is a member
     // because a GIF's frame clock lives on this object.

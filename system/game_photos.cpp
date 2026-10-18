@@ -24,6 +24,9 @@ static const uint16_t COL_BG   = PX(RGB565(0x00, 0x00, 0x00));
 static const uint16_t COL_DIM  = PX(RGB565(0x6E, 0x6E, 0x80));
 static const uint16_t COL_TEXT = PX(RGB565(0xEC, 0xEC, 0xF4));
 static const uint16_t COL_WARN = PX(RGB565(0xE0, 0x50, 0x50));
+
+// The delete bin on the label bar: shared by the hit test and the drawing.
+static const int BIN_X = 250, BIN_Y = 337, BIN_R = 16;
 static const uint16_t COL_ACCENT = PX(RGB565(0x7A, 0x8B, 0xF0));
 
 // Round badge: fill by default; hold a picture to toggle a complete-image view.
@@ -445,6 +448,33 @@ void GamePhotos::showCurrent()
     Serial.println(line);
 }
 
+void GamePhotos::deleteCurrent()
+{
+    if (index < clawd_album::count()) {
+        Serial.println("[photos] built-in picture, not deletable");
+        return;
+    }
+    const char *path = media::pathAt(index - clawd_album::count());
+    if (!*path) return;
+    if (!SD_MMC.remove(path)) {
+        Serial.printf("[photos] could not remove %s", path); Serial.println();
+        failed = true;
+        return;
+    }
+    Serial.printf("[photos] removed %s", path); Serial.println();
+    closeGif();
+    cacheForget();                       // the cache describes a library that changed
+    media::list(media::PHOTOS_DIR, PHOTO_EXTS, PHOTO_EXT_COUNT);
+    if (pictureCount() <= 0) {
+        index = 0;
+        failed = false;
+        needsPresent = true;
+        return;
+    }
+    if (index >= pictureCount()) index = pictureCount() - 1;
+    showCurrent();
+}
+
 void GamePhotos::enter()
 {
     gesture.reset();
@@ -468,8 +498,25 @@ void GamePhotos::leave()
 void GamePhotos::update(float dt)
 {
     setDirty(1,0);
+    // The bin sits at the right end of the label bar. Two taps: the first arms it, the
+    // second removes the file. Built-in pictures live in the firmware, so for those the
+    // bin does nothing at all.
+    const int tx = input::tapX(), ty = input::tapY();
+    const bool onBin = (tx - BIN_X) * (tx - BIN_X) + (ty - BIN_Y) * (ty - BIN_Y) <= BIN_R * BIN_R;
+    bool consumed = false;
+    if (input::tapped()) {
+        if (onBin) {
+            consumed = true;
+            if (!deleteArmed) { deleteArmed = true; needsPresent = true; }
+            else { deleteArmed = false; deleteCurrent(); }
+        } else if (deleteArmed) {
+            deleteArmed = false;
+            needsPresent = true;
+        }
+    }
+
     if (pictureCount() > 0) {
-        const auto action=gesture.update(input::touchDown(),input::tapped(),
+        const auto action=gesture.update(input::touchDown(),input::tapped() && !consumed,
             input::tapX(),input::tapY(),input::touchHeldMs());
         if (action.toggleFit) {
             fillScreen = !fillScreen;
@@ -574,6 +621,17 @@ void GamePhotos::render()
     gfx::fillRect(145,325,70,24,panel);
     char count[24];snprintf(count,sizeof count,"%d / %d",index+1,pictureCount());
     gfx::textCentered(count,333,COL_TEXT,1);
+
+    // The bin: dim by default, red and ringed once armed, so the second tap is obviously a
+    // confirmation rather than another delete.
+    {
+        const uint16_t c = deleteArmed ? COL_WARN : COL_DIM;
+        const int lid = deleteArmed ? 10 : 8;
+        gfx::fillRect(BIN_X - lid, BIN_Y - 9, 2 * lid, 2, c);          // lid
+        gfx::fillRect(BIN_X - lid + 3, BIN_Y - 12, 2 * lid - 6, 2, c); // handle
+        gfx::fillRect(BIN_X - lid + 1, BIN_Y - 6, 2 * lid - 2, 12, c); // body
+        if (deleteArmed) gfx::strokeCircle((float)BIN_X, (float)BIN_Y, 16.0f, 2.0f, COL_WARN);
+    }
 }
 
 void GamePhotos::drawIcon(float cx, float cy, float size) const

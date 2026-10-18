@@ -33,7 +33,7 @@ LINE_PITCH, TITLE_Y, DOTS_Y, HINT_Y = 36, 44, 296, 320
 
 def load_pages():
     src = open(CPP, encoding="utf-8").read()
-    block = src[src.index("LINES[][4] = {"):]
+    block = src[src.index("LINES[][5] = {"):]
     block = block[:block.index("\n};")]
     pages = []
     for line in block.splitlines():

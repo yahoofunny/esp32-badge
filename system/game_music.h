@@ -14,6 +14,7 @@ public:
     void render() override;
     void nextTrack(int direction=1);
     void togglePlayback();
+    void deleteCurrentTrack();   // removes the loaded file, two taps away
     void printDiagnostics() const;
     bool setVolumePercent(int percent,bool remember=true);
 private:
