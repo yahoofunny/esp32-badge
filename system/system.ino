@@ -33,6 +33,7 @@
 #include "game.h"
 #include "game_clawd.h"
 #include "game_pet.h"
+#include "game_help.h"
 #include "game_photos.h"
 #include "game_hypno.h"
 #include "game_music.h"
@@ -58,6 +59,7 @@ static GameClawd   g_clawd;
 static GameTap     g_tap;
 static GamePet     g_pet;
 static GameSettings g_settings;
+static GameHelp     g_help;
 static GamePhotos   g_photos;
 static GameHypno    g_hypno;
 static GameMusic    g_music;
@@ -66,7 +68,7 @@ static GameBricks   g_bricks;
 static GameFolder   g_folder;
 static GameBack     g_back;
 
-static Game *const GAMES[] = { &g_pet, &g_photos, &g_music, &g_hypno, &g_folder, &g_settings };
+static Game *const GAMES[] = { &g_pet, &g_photos, &g_music, &g_hypno, &g_folder, &g_help, &g_settings };
 static const int   GAME_COUNT = (int)(sizeof(GAMES) / sizeof(GAMES[0]));
 static Game *const MINI_GAMES[] = { &g_clawd, &g_tap, &g_snake, &g_bricks, &g_back };
 static const int MINI_GAME_COUNT = (int)(sizeof(MINI_GAMES) / sizeof(MINI_GAMES[0]));

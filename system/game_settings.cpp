@@ -616,7 +616,10 @@ void GameSettings::renderSystem()
     snprintf(v[7], sizeof(v[7]), "%uh %um", (unsigned)(secs / 3600), (unsigned)((secs / 60) % 60));
 
     const power::Reading b = power::cached();
-    if (b.valid) snprintf(v[8], sizeof(v[8]), "%d%%  %d mV", b.percent, b.millivolts);
+    // The percentage alone cannot tell a full battery from a flat one on a charger, and
+    // the gauge knows which: it reports FULL, CHARGING or DISCHARGING with a current.
+    if (b.valid) snprintf(v[8], sizeof(v[8]), "%d%% %dmV %s", b.percent, b.millivolts,
+                          power::stateText(b.state));
     else         snprintf(v[8], sizeof(v[8]), "not present");
 
     const esp_partition_t *run = esp_ota_get_running_partition();

@@ -160,6 +160,9 @@ void GameMusic::playCurrent() {
     redraw=true;
     Serial.printf("[music] %d/%d %s: %s\n",index+1,tracks,media::nameAt(index),failed?"FAILED":"playing");
 }
+// The continuous volume control, between the two round buttons that step by ten.
+static const int VOL_X0 = 112, VOL_X1 = 248, VOL_Y = 75;
+
 void GameMusic::nextTrack(int direction) {
     MusicGuard guard(pump);
     if(!tracks)return;
@@ -201,12 +204,26 @@ void GameMusic::update(float dt) {
     }
     if(!paused && !failed && tracks)rotation=fmodf(rotation+dt*1.8f,2*PI_F);
     const int oldPressed=pressed;
-    if(input::touchDown()) {
+    {
+        static bool dragging = false;
         const int x=input::tapX(),y=input::tapY();
-        if(!tracking){tracking=true;moved=false;startX=x;startY=y;startTarget=musicTarget(x,y);}
-        const int dx=x-startX,dy=y-startY;if(dx*dx+dy*dy>14*14)moved=true;
-        pressed=(!moved && musicTarget(x,y)==startTarget)?startTarget:-1;
-    } else {
+        const bool onBar=(x>=VOL_X0 && x<=VOL_X1 && y>=VOL_Y-16 && y<=VOL_Y+18);
+        if(dragging || (input::touchDown() && onBar)) {
+            if(input::touchDown()) {
+                dragging=true;
+                const int v=constrain((x-VOL_X0)*100/(VOL_X1-VOL_X0),0,100);
+                if(v!=volume){setVolumePercent(v,false);redraw=true;}
+                pressed=-1;
+            } else {
+                dragging=false;
+                setVolumePercent(volume,true);
+            }
+        } else if(input::touchDown()) {
+            const int x2=x,y2=y;
+            if(!tracking){tracking=true;moved=false;startX=x2;startY=y2;startTarget=musicTarget(x2,y2);}
+            const int dx=x2-startX,dy=y2-startY;if(dx*dx+dy*dy>14*14)moved=true;
+            pressed=(!moved && musicTarget(x2,y2)==startTarget)?startTarget:-1;
+        } else {
         if(tracking && !moved && input::tapped() && musicTarget(input::tapX(),input::tapY())==startTarget) {
             if(startTarget==0)nextTrack(-1);
             else if(startTarget==1)togglePlayback();
@@ -220,6 +237,7 @@ void GameMusic::update(float dt) {
             }
         }
         tracking=false;pressed=-1;
+        }
     }
     if(oldPressed!=pressed)redraw=true;
 }
@@ -234,7 +252,10 @@ void GameMusic::render() {
         gfx::fillCircle(x,75,18,pressed==i+3?COL_ACCENT:COL_TRACK);
         gfx::text(i?"+":"-",x-3,71,pressed==i+3?COL_BG:COL_TEXT,1);
     }
-    char text[36];snprintf(text,sizeof text,"VOL %d",volume);gfx::textCentered(text,72,COL_DIM,1);
+    char text[36];snprintf(text,sizeof text,"VOL %d",volume);gfx::textCentered(text,50,COL_DIM,1);
+    gfx::fillRect(VOL_X0,VOL_Y-3,VOL_X1-VOL_X0,7,COL_TRACK);
+    gfx::fillRect(VOL_X0,VOL_Y-3,(VOL_X1-VOL_X0)*volume/100,7,COL_ACCENT);
+    gfx::fillCircle(VOL_X0+(VOL_X1-VOL_X0)*volume/100.0f,(float)VOL_Y,6.0f,COL_TEXT);
     if(!tracks) {
         gfx::textCentered(failed?"AUDIO UNAVAILABLE":"NO MUSIC",150,COL_TEXT,2);
         gfx::textCentered("put MP3 / WAV in /Music",195,COL_DIM,1);
