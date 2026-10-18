@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <Wire.h>
+#include <math.h>
 
 // The I2C bus is already up by the time any of this runs: I2C_Init() happens before
 // LCD_Init() in setup(), because the touch controller needs it. The codec sits on the
@@ -43,6 +44,22 @@ static int registerToPercent(int reg)
     if (reg <= 0) return 0;
     int pct = (reg + 1) * 100 / 256;
     return pct > VOLUME_MAX ? VOLUME_MAX : pct;
+}
+
+int percentForSlider(int position)
+{
+    if (position <= 0) return 0;
+    if (position >= VOLUME_MAX) return VOLUME_MAX;
+    return (int)lroundf((float)VOLUME_MAX *
+                        powf((float)position / (float)VOLUME_MAX, 0.7f));
+}
+
+int sliderForPercent(int percent)
+{
+    if (percent <= 0) return 0;
+    if (percent >= VOLUME_MAX) return VOLUME_MAX;
+    return (int)lroundf((float)VOLUME_MAX *
+                        powf((float)percent / (float)VOLUME_MAX, 1.0f / 0.7f));
 }
 
 int rawRegister()

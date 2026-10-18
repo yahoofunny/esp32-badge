@@ -68,6 +68,13 @@ void applyStored();               // no-op when nothing has been stored
 constexpr int ASSISTANT_MIN = 10;
 constexpr int ASSISTANT_DEFAULT = 70;    // what it uses when the key is absent
 
+// A slider's position and the codec's percentage are not the same number. The register is
+// a dB scale, so the top of the range changes loudness far faster than the bottom; move the
+// percentage linearly and the last half of the travel does almost all the work. These bend
+// the travel so that equal slider steps sound roughly equal.
+int percentForSlider(int position);
+int sliderForPercent(int percent);
+
 int  assistantVolume();                  // NVS value, or ASSISTANT_DEFAULT
 bool setAssistantVolume(int percent);    // writes and reads back
 

@@ -219,7 +219,7 @@ void GameMusic::update(float dt) {
         if(dragging || (input::touchDown() && onBar)) {
             if(input::touchDown()) {
                 dragging=true;
-                const int v=constrain((x-VOL_X0)*100/(VOL_X1-VOL_X0),0,100);
+                const int v=audio::percentForSlider(constrain((x-VOL_X0)*100/(VOL_X1-VOL_X0),0,100));
                 if(v!=volume){setVolumePercent(v,false);redraw=true;}
                 pressed=-1;
             } else {
@@ -281,9 +281,10 @@ void GameMusic::render() {
         gfx::text(i?"+":"-",x-3,71,pressed==i+3?COL_BG:COL_TEXT,1);
     }
     char text[36];snprintf(text,sizeof text,"VOL %d",volume);gfx::textCentered(text,50,COL_DIM,1);
+    const int knob=audio::sliderForPercent(volume);
     gfx::fillRect(VOL_X0,VOL_Y-3,VOL_X1-VOL_X0,7,COL_TRACK);
-    gfx::fillRect(VOL_X0,VOL_Y-3,(VOL_X1-VOL_X0)*volume/100,7,COL_ACCENT);
-    gfx::fillCircle(VOL_X0+(VOL_X1-VOL_X0)*volume/100.0f,(float)VOL_Y,6.0f,COL_TEXT);
+    gfx::fillRect(VOL_X0,VOL_Y-3,(VOL_X1-VOL_X0)*knob/100,7,COL_ACCENT);
+    gfx::fillCircle(VOL_X0+(VOL_X1-VOL_X0)*knob/100.0f,(float)VOL_Y,6.0f,COL_TEXT);
     if(!tracks) {
         gfx::textCentered(failed?"AUDIO UNAVAILABLE":"NO MUSIC",150,COL_TEXT,2);
         gfx::textCentered("put MP3 / WAV in /Music",195,COL_DIM,1);

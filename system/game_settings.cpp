@@ -394,7 +394,8 @@ void GameSettings::updateVolume()
 
     if (dragging && inRect(input::tapX(), input::tapY(), BAR_X0 - 30, BAR_Y - 44,
                            BAR_X1 + 30, BAR_Y + 44)) {
-        const int pct = (int)lroundf((input::tapX() - BAR_X0) * 100.0f / (BAR_X1 - BAR_X0));
+        const int pos = (int)lroundf((input::tapX() - BAR_X0) * 100.0f / (BAR_X1 - BAR_X0));
+        const int pct = audio::percentForSlider(pos);
         if (pct != shown) apply(pct);
     } else if (input::tapped()
                && inRect(input::tapX(), input::tapY(), BAR_X0 - 12, BAR_Y - 24,
@@ -576,8 +577,9 @@ void GameSettings::renderVolume()
     for (int i = 0; i < 10; i++) {
         gfx::fillRect(BAR_X0 + (BAR_X1 - BAR_X0) * i / 10, y, 1, BAR_H, COL_BG);
     }
-    gfx::fillCircle(knobX(shown < 0 ? 0 : shown), y + BAR_H / 2.0f, (float)KNOB_R, COL_ACCENT);
-    gfx::fillCircle(knobX(shown < 0 ? 0 : shown), y + BAR_H / 2.0f, (float)(KNOB_R - 4),
+    const int knobPos = audio::sliderForPercent(shown < 0 ? 0 : shown);
+    gfx::fillCircle(knobX(knobPos), y + BAR_H / 2.0f, (float)KNOB_R, COL_ACCENT);
+    gfx::fillCircle(knobX(knobPos), y + BAR_H / 2.0f, (float)(KNOB_R - 4),
                     gfx::dim(COL_ACCENT, 0.55f));
 
     // Not the control -- the evidence. This is the register the assistant writes from
