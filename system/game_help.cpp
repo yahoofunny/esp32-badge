@@ -13,22 +13,19 @@
 // finish it without being told anything else, so it also explains the gestures the
 // individual apps use -- the album's long press, the pet's menu, how the assistant is
 // entered -- and ends on the only thing that matters.
-static const char *const LINES[][4] = {
+static const char *const LINES[][5] = {
     { "我叫 CLAWD", "这是我的吧唧", nullptr },
-    { "怎么选", "拖动圆环", "点一下 就打开", nullptr },
-    { "怎么回来", "在任何页面", "按住上面的按键", nullptr },
     { "里面有什么", "宠物 相册", "音乐 游戏 小智", nullptr },
-    { "宠物", "它会饿 会困 会脏", "点它 陪它", nullptr },
-    { "宠物长大", "照顾得好", "它会一点点长大", nullptr },
-    { "宠物按钮", "一排是 喂 玩 摸", "一排是 睡 洗 改名", nullptr },
-    { "相册", "照片在 /Photos", "点一下 换一张", nullptr },
-    { "相册", "长按 铺满整个屏幕", nullptr },
-    { "音乐", "音乐在 /Music", "点中间 播放暂停", nullptr },
-    { "音乐", "两边换歌", "上面滑条调音量", nullptr },
-    { "游戏", "转圆环 找 GAMES", "里面有四个小游戏", nullptr },
+    { "随时回来", "在任何页面", "按住上面的按键", nullptr },
     { "小智", "在主页按住按键", "就能和它说话", nullptr },
-    { "传文件", "设置里打开传文件", "手机连上热点", "按地址上传" },
-    { "电量", "没电了用 USB-C", "设置里看电量", nullptr },
+    { "相册", "照片在 /Photos", nullptr },
+    { "相册", "长按 铺满整个屏幕", nullptr },
+    { "宠物", "它会饿 会困 会脏", "照顾得好 会长大", nullptr },
+    { "宠物", "长按 可以拖走", "它还会注视你的手", nullptr },
+    { "宠物按钮", "一排是 喂 玩 摸", "一排是 睡 洗 改名", nullptr },
+    { "音乐", "音乐在 /Music", "上面滑条调音量", nullptr },
+    { "传文件", "设置里打开传文件", "手机连上热点", "按地址上传", nullptr },
+    { "电量", "设置里看电量", "没电用 USB-C", nullptr },
     { "出问题", "没声音 调大音量", "看不到照片 查文件夹", nullptr },
     { "祝你玩得开心", nullptr },
 };
@@ -110,6 +107,27 @@ static void drawUtf8(const char *s, int y, uint16_t colour)
     }
 }
 
+// The clawd mark, from the icon this project uses. Its path is entirely horizontal and
+// vertical segments, so it is drawn as nine rectangles in the icon's own 24-unit box
+// rather than pulling in an SVG renderer for one image.
+static void drawClawdMark(int cx, int cy, float scale)
+{
+    auto rect = [&](float x, float y, float w, float h) {
+        const int px = (int)lroundf(cx + (x - 12.0f) * scale);
+        const int py = (int)lroundf(cy + (y - 12.0f) * scale);
+        gfx::fillRect(px, py, (int)ceilf(w * scale), (int)ceilf(h * scale), COL_ACCENT);
+    };
+    rect(4.5f, 6.0f, 15.0f, 5.0f);      // head
+    rect(2.0f, 11.0f, 20.0f, 2.0f);     // arms
+    rect(4.5f, 13.0f, 15.0f, 3.0f);     // torso
+    rect(5.5f, 16.0f, 1.5f, 2.0f);      // four legs
+    rect(8.0f, 16.0f, 1.5f, 2.0f);
+    rect(14.5f, 16.0f, 1.5f, 2.0f);
+    rect(17.0f, 16.0f, 1.5f, 2.0f);
+    rect(7.0f, 8.0f, 1.0f, 3.0f);       // eyes
+    rect(16.0f, 8.0f, 1.0f, 3.0f);
+}
+
 void GameHelp::enter()
 {
     page = 0;
@@ -139,10 +157,12 @@ void GameHelp::render()
     gfx::clear(COL_BG);
     drawUtf8("怎么玩", TITLE_Y, COL_ACCENT);
 
+    if (page == 0) drawClawdMark(180, 118, 4.0f);
+
     const char *const *lines = LINES[page];
     int count = 0;
-    while (count < 3 && lines[count]) count++;
-    const int top = 150 - (count - 1) * LINE_PITCH / 2;
+    while (count < 4 && lines[count]) count++;
+    const int top = (page == 0) ? 198 : (150 - (count - 1) * LINE_PITCH / 2);
     for (int i = 0; i < count; i++) {
         drawUtf8(lines[i], top + i * LINE_PITCH, COL_TEXT);
     }
