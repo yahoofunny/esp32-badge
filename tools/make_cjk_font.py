@@ -6,8 +6,9 @@ full CJK face -- tens of thousands of glyphs, hundreds of kilobytes -- this take
 strings that are going to be drawn on the badge and rasterises only the characters they
 contain. A tutorial of six short pages needs about forty-five, which is 1.5 KB.
 
-Glyphs are 16x16, one bit per pixel, row-major, two bytes per row -- the size a Chinese
-bitmap font has used since the DOS era, and readable at 2x on a 360 px panel.
+Glyphs are 24x24, one bit per pixel, row-major, four bytes per row. 16 px was tried first
+and dense characters -- the ones with a full-width radical on the left -- came out mushy
+when scaled up; rasterising at the final size is what makes them legible.
 
 The face is a system font (Microsoft YaHei by default). What is stored is a rasterised
 subset of individual characters, the same arrangement the project's 8x8 font already uses;
@@ -28,7 +29,7 @@ DEFAULT_FONT = r"C:\Windows\Fonts\msyh.ttc"     # Microsoft YaHei
 DEFAULT_TEXT = os.path.join(ROOT, "tools", "help_text.txt")
 DEFAULT_OUT = os.path.join(ROOT, "system", "assets_cjk.h")
 
-GLYPH = 16
+GLYPH = 24
 THRESHOLD = 96          # coverage above this counts as ink
 
 
@@ -57,7 +58,7 @@ def rasterise(font_path, codepoints):
             bits = 0
             for x in range(GLYPH):
                 if img.getpixel((x, y)) > THRESHOLD:
-                    bits |= 1 << (15 - x)
+                    bits |= 1 << (GLYPH - 1 - x)
             rows.append(bits)
         glyphs[cp] = rows
     return glyphs
@@ -94,7 +95,7 @@ def main():
             gy = (i // cols) * (GLYPH + 16) * scale
             for y, bits in enumerate(glyphs[cp]):
                 for x in range(GLYPH):
-                    if bits & (1 << (15 - x)):
+                    if bits & (1 << (GLYPH - 1 - x)):
                         draw.rectangle([gx + x * scale, gy + y * scale,
                                         gx + (x + 1) * scale - 1, gy + (y + 1) * scale - 1],
                                        fill=(0xEC, 0xEC, 0xF4))
@@ -119,10 +120,10 @@ def main():
     ]
     for i in range(0, len(cps), 8):
         lines.append("    " + " ".join(f"0x{cp:04X}," for cp in cps[i:i + 8]))
-    lines += ["};", "", "static const uint16_t cjk_bits[CJK_COUNT][CJK_GLYPH] = {"]
+    lines += ["};", "", "static const uint32_t cjk_bits[CJK_COUNT][CJK_GLYPH] = {"]
     for cp in cps:
         rows = glyphs[cp]
-        lines.append(f"    {{ {', '.join(f'0x{b:04X}' for b in rows)} }},   // {chr(cp)}")
+        lines.append(f"    {{ {', '.join(f'0x{b:06X}' for b in rows)} }},   // {chr(cp)}")
     lines.append("};")
     lines.append("")
 

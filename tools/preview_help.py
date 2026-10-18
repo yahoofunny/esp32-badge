@@ -27,8 +27,8 @@ CPP = os.path.join(ROOT, "system", "game_help.cpp")
 CJK = os.path.join(ROOT, "system", "assets_cjk.h")
 FONT = os.path.join(ROOT, "system", "assets_font.h")
 
-CJK_SCALE, ASCII_SCALE, GLYPH = 2, 4, 16
-LINE_PITCH, TITLE_Y, DOTS_Y, HINT_Y = 44, 44, 292, 316
+CJK_SCALE, ASCII_SCALE, GLYPH = 1, 3, 24
+LINE_PITCH, TITLE_Y, DOTS_Y, HINT_Y = 36, 44, 296, 320
 
 
 def load_pages():
@@ -49,10 +49,10 @@ def load_glyphs():
     cps = [int(x, 16) for x in re.findall(r"0x([0-9A-F]{4}),",
                                          re.search(r"cjk_codepoints\[CJK_COUNT\] = \{(.*?)\};",
                                                    src, re.S).group(1))]
-    rows = re.findall(r"\{ (0x[0-9A-F]{4}, .*?) \},\s+//", src)
+    rows = re.findall(r"\{ (0x[0-9A-F]{6}, .*?) \},\s+//", src)
     glyphs = {}
     for cp, row in zip(cps, rows):
-        glyphs[cp] = [int(v, 16) for v in re.findall(r"0x([0-9A-F]{4})", row)]
+        glyphs[cp] = [int(v, 16) for v in re.findall(r"0x([0-9A-F]{6})", row)]
     return glyphs
 
 
@@ -84,7 +84,7 @@ def draw_utf8(px, glyphs, font, s, y, colour):
             if bits:
                 for row in range(GLYPH):
                     for col in range(GLYPH):
-                        if bits[row] & (1 << (15 - col)):
+                        if bits[row] & (1 << (GLYPH - 1 - col)):
                             for dy in range(CJK_SCALE):
                                 for dx in range(CJK_SCALE):
                                     px[x + col * CJK_SCALE + dx,

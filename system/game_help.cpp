@@ -14,24 +14,28 @@
 // individual apps use -- the album's long press, the pet's menu, how the assistant is
 // entered -- and ends on the only thing that matters.
 static const char *const LINES[][4] = {
-    { "你好！我是 clawd", "这是你的吧唧", nullptr },
-    { "拖动圆环", "换到下一个", nullptr },
-    { "点一下图标", "就能打开", nullptr },
-    { "按住上面的按键", "回到主页", nullptr },
-    { "在主页按住按键", "小智就来了", nullptr },
-    { "相册", "点一下 换一张", "长按 切换铺满", nullptr },
-    { "宠物", "点它 它会开心", "长按 可以拖走", nullptr },
-    { "宠物下面的按钮", "喂食 玩耍 摸摸", "洗澡 睡觉 改名", nullptr },
-    { "音乐", "点中间 播放暂停", "点两边 换歌", nullptr },
-    { "上面滑条", "拖动调音量", nullptr },
-    { "传照片和音乐", "设置里 打开传文件", "按屏幕上的地址上传", nullptr },
-    { "没电了", "用 USB-C 充电", nullptr },
+    { "我叫 CLAWD", "这是我的吧唧", nullptr },
+    { "怎么选", "拖动圆环", "点一下 就打开", nullptr },
+    { "怎么回来", "在任何页面", "按住上面的按键", nullptr },
+    { "里面有什么", "宠物 相册", "音乐 游戏 小智", nullptr },
+    { "宠物", "它会饿 会困 会脏", "点它 陪它", nullptr },
+    { "宠物长大", "照顾得好", "它会一点点长大", nullptr },
+    { "宠物按钮", "一排是 喂 玩 摸", "一排是 睡 洗 改名", nullptr },
+    { "相册", "照片在 /Photos", "点一下 换一张", nullptr },
+    { "相册", "长按 铺满整个屏幕", nullptr },
+    { "音乐", "音乐在 /Music", "点中间 播放暂停", nullptr },
+    { "音乐", "两边换歌", "上面滑条调音量", nullptr },
+    { "游戏", "转圆环 找 GAMES", "里面有四个小游戏", nullptr },
+    { "小智", "在主页按住按键", "就能和它说话", nullptr },
+    { "传文件", "设置里打开传文件", "手机连上热点", "按地址上传" },
+    { "电量", "没电了用 USB-C", "设置里看电量", nullptr },
+    { "出问题", "没声音 调大音量", "看不到照片 查文件夹", nullptr },
     { "祝你玩得开心", nullptr },
 };
 static const int PAGE_COUNT = (int)(sizeof(LINES) / sizeof(LINES[0]));
 
 static const int TITLE_Y = 44;
-static const int LINE_PITCH = 44;     // 32 px glyphs plus a gap
+static const int LINE_PITCH = 36;     // 24 px glyphs plus a gap
 static const int DOTS_Y = 292;
 static const int HINT_Y = 316;
 
@@ -40,12 +44,12 @@ static const uint16_t COL_TEXT   = PX(RGB565(0xF2, 0xF2, 0xF6));
 static const uint16_t COL_DIM    = PX(RGB565(0x6E, 0x7E, 0x72));
 static const uint16_t COL_ACCENT = PX(RGB565(0x5F, 0xC4, 0x7A));
 
-// Everything here is drawn at one of two scales: Chinese glyphs are 16x16 doubled, Latin
-// text is the system 8x8 font at four times, which puts both on a 32-pixel line.
-static const int CJK_SCALE = 2;
-static const int ASCII_SCALE = 4;
+// Everything here is drawn at one of two scales: Chinese glyphs are 24x24 at 1:1, Latin
+// text is the system 8x8 font at three times, which puts both on a 24-pixel line.
+static const int CJK_SCALE = 1;
+static const int ASCII_SCALE = 3;
 
-static const uint16_t *glyphFor(uint16_t cp)
+static const uint32_t *glyphFor(uint16_t cp)
 {
     int lo = 0, hi = CJK_COUNT - 1;
     while (lo <= hi) {
@@ -90,11 +94,12 @@ static void drawUtf8(const char *s, int y, uint16_t colour)
         const uint16_t cp = nextCodepoint(&s);
         if (cp < 0x80) {
             char one[2] = { (char)cp, 0 };
-            gfx::text(one, x, y, colour, ASCII_SCALE);
-        } else if (const uint16_t *bits = glyphFor(cp)) {
+            // The 8x8 cell sits its ink at the top; the 24 px CJK rows sit centred.
+            gfx::text(one, x, y + 4, colour, ASCII_SCALE);
+        } else if (const uint32_t *bits = glyphFor(cp)) {
             for (int row = 0; row < CJK_GLYPH; row++) {
                 for (int col = 0; col < CJK_GLYPH; col++) {
-                    if (bits[row] & (1 << (15 - col))) {
+                    if (bits[row] & (1u << (CJK_GLYPH - 1 - col))) {
                         gfx::fillRect(x + col * CJK_SCALE, y + row * CJK_SCALE,
                                       CJK_SCALE, CJK_SCALE, colour);
                     }
