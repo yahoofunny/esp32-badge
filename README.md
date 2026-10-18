@@ -243,6 +243,7 @@ system/
 ├── clawd_album.{h,cpp}   直接从闪存读取的 24 个原始 Clawd GIF
 ├── game_hypno.{h,cpp}    传感器驱动的怀表、暂停及运动灵敏度
 ├── game_music.{h,cpp}    SD 音乐播放器、控制及音频驱动管理
+├── game_help.{h,cpp}     设备上的中文图文教程（「怎么玩」）
 ├── game_settings.{h,cpp} 音量与系统设置
 ├── power.{h,cpp}         BQ27220 电量计
 ├── clawd_sprite.h        共享精灵与调色板
@@ -250,10 +251,28 @@ system/
 ├── assets_icons.h        生成的应用图标
 ├── assets_mon.h          生成的七种宠物身体
 ├── assets_font.h         生成的 8×8 ASCII 字体
+├── assets_cjk.h          生成的 24×24 汉字点阵（只含教程用到的字）
 └── partitions.csv        必须匹配设备现有布局，详见固件分区
 ```
 
-主页有 CLAWD PET、PHOTOS、MUSIC、HYPNO、GAMES、SETTINGS 六个入口。
+主页有 CLAWD PET、PHOTOS、MUSIC、HYPNO、GAMES、HOW TO、SETTINGS 七个入口。
+
+「HOW TO」（`game_help`）是**设备上的教程**，送给小朋友时不需要另外找网页：十四页中文，
+讲的是猜不到的部分（长按、按住按键、文件放在哪个目录、音量滑条、宠物会注视你的手），
+一页一个意思。系统字体只有 8×8 ASCII，写不了汉字，所以这个应用自带一套 24×24 点阵，
+只收录这十四页用到的 111 个字（5.3 KB），由 `tools/make_cjk_font.py` 从系统字体光栅化。
+版面可以不经设备验证：`tools/preview_help.py` 在电脑上按同样的点阵把每页画出来。
+
+相册和音乐都能**就地删除**：相册标签栏右端、音乐唱片右边各有一个小垃圾桶，点一下进入
+红色待确认状态，再点一下才真删。相册里固件自带的图片不可删除。
+
+相册会对相邻的图片做**预缓存**（PSRAM 里三帧，上一张/当前/下一张），所以切图不再重新解码：
+卡上一千两百万像素的照片从 400~600 ms 降到约 12 ms。预解码发生在"用户正在看当前图"的
+空闲里，屏幕内容不变。
+
+两个音量滑条（设置页、音乐页）走同一条**感知曲线**（`audio::percentForSlider`）：codec 的
+寄存器是分贝刻度，线性映射会让后一半行程的声音变化明显大于前一半；曲线把这一点扳平，
+而存进 NVS 的仍是 codec 百分比，与小智读的刻度一致。
 GAMES 内是包含 CLAWD ROLL、CLAWD TAP、SNAKE、BRICKS 和 BACK 的第二层圆环。
 两层圆环共用拖转、点击和倾斜操作，并分别记住选中位置。各模块自行绘制图标；宠物养成与语音共用同一入口。
 CLAWD PET 保留经典橙色主页图标，进入应用后，身体颜色随当前进化形态变化。
@@ -396,6 +415,7 @@ PCM 回调明确将采样送入 I²S。串口 `D` 区分回调尝试次数和 I�
 ./tools/deploy_game.sh system          # 更新 factory 启动器，保留 ota_0
 ./tools/deploy_game.sh games/clawd-roll   # 或部署独立游戏工程
 python tools/make_font.py              # 重新生成位图字体
+python tools/make_cjk_font.py          # 重新生成教程用到的汉字点阵
 python tools/make_mon_sprites.py       # 重新生成共享宠物的七种形态
 python tools/make_icon_sprites.py      # 重新生成三个启动器图标
 python tools/make_icon.py              # 重新生成项目图标
@@ -403,6 +423,7 @@ python tools/make_icon.py              # 重新生成项目图标
 python tools/preview_pet.py            # 烧录前检查宠物布局
 python tools/preview_icons.py          # 检查圆环图标底盘上的应用图标
 python tools/preview_launcher.py       # 检查圆环布局
+python tools/preview_help.py           # 在电脑上读一遍设备教程的每一页
 python tools/check_preview_sync.py     # 运行真实 C++ 回归检查
 ```
 
